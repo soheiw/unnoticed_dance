@@ -152,6 +152,13 @@ let originalVideoChunks: BlobPart[] = [];
 let originalVideoStartedAt = '';
 let originalVideoCompletionStatus = '';
 
+class CameraRequestTimeout extends Error {
+  constructor() {
+    super('Camera request timed out');
+    this.name = 'CameraRequestTimeout';
+  }
+}
+
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -249,6 +256,17 @@ cameraSelect.addEventListener('pointerdown', () => {
 
 function updateStatus(text: string) {
   statusElement!.textContent = `Status: ${text}`;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number, onTimeout: () => Error): Promise<T> {
+  let timeoutId = 0;
+  const timeout = new Promise<T>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(onTimeout()), timeoutMilliseconds);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
 }
 
 function setPlaybackButtonsEnabled(enabled: boolean) {
@@ -638,6 +656,7 @@ async function initializeCamera(force = false) {
   cameraStarting = true;
   updateStatus('requesting camera permission');
   cameraSelect!.disabled = true;
+  retryCameraButton!.disabled = true;
 
   if (force) {
     cameraRetryCount = 0;
@@ -655,10 +674,14 @@ async function initializeCamera(force = false) {
   if (selectedCameraId) videoConstraint.deviceId = { exact: selectedCameraId };
 
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: videoConstraint,
-      audio: false,
-    });
+    cameraStream = await withTimeout(
+      navigator.mediaDevices.getUserMedia({
+        video: videoConstraint,
+        audio: false,
+      }),
+      12000,
+      () => new CameraRequestTimeout(),
+    );
     video.srcObject = cameraStream;
     video.play().catch((error) => {
       console.warn('Video preview playback failed:', error);
@@ -673,16 +696,22 @@ async function initializeCamera(force = false) {
     startCameraFrameLoop(runId);
     cameraStarting = false;
     cameraRetryCount = 0;
+    retryCameraButton!.disabled = false;
+    retryCameraButton!.textContent = 'Retry Camera';
     updateStatus('camera ready, move into view');
   } catch (error) {
     cameraStarting = false;
     cameraRetryCount += 1;
     cameraSelect!.disabled = false;
+    retryCameraButton!.disabled = false;
+    retryCameraButton!.textContent = 'Enable Camera';
 
     if (error instanceof DOMException && error.name === 'NotAllowedError') {
       updateStatus('camera permission blocked');
     } else if (error instanceof DOMException && error.name === 'NotFoundError') {
       updateStatus('no camera devices found');
+    } else if (error instanceof CameraRequestTimeout) {
+      updateStatus('camera permission prompt timed out; check browser camera icon');
     } else if (cameraRetryCount <= 2) {
       window.setTimeout(() => initializeCamera(true), 800);
       updateStatus('camera busy, retrying…');
@@ -1659,5 +1688,5 @@ function drawFrame() {
 resizeCanvas();
 loadSavedRecordings();
 loadSavedRuleSets();
-initializeCamera();
+refreshCameraDevices();
 requestAnimationFrame(drawFrame);
