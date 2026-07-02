@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="src/style.css" />
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
   </head>
   <body>
     <div id="app">
@@ -20,11 +21,27 @@
           <button id="clearButton" type="button">Clear Motion</button>
           <button id="retryCameraButton" type="button">Enable Camera</button>
         </div>
+        <div class="controls">
+          <button id="pausePlaybackButton" type="button" disabled>Pause</button>
+          <button id="setStartButton" type="button" disabled>Set Start</button>
+          <button id="setEndButton" type="button" disabled>Set End</button>
+          <button id="resetTrimButton" type="button" disabled>Reset Trim</button>
+          <button id="saveTrimmedCopyButton" type="button" disabled>Save Trimmed Copy</button>
+        </div>
+        <div class="controls setup-only">
+          <button id="cameraModeButton" type="button" class="mode-active">Camera</button>
+          <button id="fileModeButton" type="button">Video File</button>
+        </div>
         <div class="recording-library setup-only">
           <label for="cameraSelect">Camera</label>
           <select id="cameraSelect">
             <option value="">Default camera</option>
           </select>
+        </div>
+        <div class="recording-library setup-only" id="videoFileRow" style="display: none;">
+          <label for="videoFileInput">Video File</label>
+          <input id="videoFileInput" type="file" accept="video/*" />
+          <button id="resetVideoButton" type="button">Reset</button>
         </div>
         <div class="recording-library setup-only">
           <label for="recordingSelect">Saved Motion</label>
@@ -32,6 +49,18 @@
             <option value="">No saved recordings</option>
           </select>
           <button id="deleteRecordingButton" type="button" disabled>Delete Saved</button>
+        </div>
+        <div class="recording-library setup-only">
+          <button id="exportRecordingButton" type="button" disabled>Export Selected</button>
+          <button id="exportAllButton" type="button">Export All</button>
+        </div>
+        <div class="recording-library setup-only">
+          <label for="importFileInput">Import</label>
+          <input id="importFileInput" type="file" accept=".zip" />
+          <label class="recording-option" for="importOverwriteCheckbox">
+            <input id="importOverwriteCheckbox" type="checkbox" />
+            Overwrite on ID match
+          </label>
         </div>
         <label class="recording-option setup-only" for="saveOriginalVideoCheckbox">
           <input id="saveOriginalVideoCheckbox" type="checkbox" />
@@ -61,6 +90,7 @@
           </div>
         </div>
         <div class="status">Status: click Enable Camera</div>
+        <div class="status" id="frameCounter">Frame: -</div>
       </div>
     </div>
     <script type="module" src="src/main.ts"></script>

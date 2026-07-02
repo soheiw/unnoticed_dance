@@ -7,10 +7,19 @@ export interface PoseLandmark {
   visibility: number;
 }
 
+export interface HandLandmarks {
+  // MediaPipe's own Left/Right label, mirrored for a front-facing selfie camera
+  // (i.e. "Right" is the hand that visually appears on the left in a mirrored
+  // self-view — this is MediaPipe's documented behavior, not a bug).
+  left: PoseLandmark[] | null;
+  right: PoseLandmark[] | null;
+}
+
 export interface PoseFrame {
   t: number;
   landmarks: PoseLandmark[];
   faceLandmarks: PoseLandmark[];
+  handLandmarks?: HandLandmarks; // absent on recordings made before hand tracking was added
 }
 
 export interface StoredRecording {
@@ -19,6 +28,16 @@ export interface StoredRecording {
   createdAt: string;
   duration: number;
   frames: PoseFrame[];
+  // Populated when "Save original video" is checked; not present on older
+  // recordings or ones saved without that option. getAllRecordings() loads
+  // every recording's full Blob into memory to populate the list UI, which
+  // is fine at prototype scale — a future optimization would move Blobs
+  // into their own object store keyed by recording id, loaded on demand.
+  originalVideo?: {
+    blob: Blob;
+    mimeType: string;
+    filename: string;
+  };
 }
 
 interface RecordingsDB extends DBSchema {

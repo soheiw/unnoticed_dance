@@ -1,6 +1,7 @@
 import './style.css';
 import type { FaceMesh, Results as FaceResults } from '@mediapipe/face_mesh';
 import type { Pose, Results as PoseResults } from '@mediapipe/pose';
+import type { Hands, Results as HandsResults } from '@mediapipe/hands';
 import {
   saveRecording,
   loadRecording,
@@ -8,13 +9,17 @@ import {
   deleteRecording,
   type PoseFrame,
   type PoseLandmark,
+  type HandLandmarks,
   type StoredRecording,
 } from './storage';
+import { exportRecording, exportAllRecordings, importRecordingsFromFile } from './export-import';
 
 declare global {
   interface Window {
     Pose: typeof import('@mediapipe/pose').Pose;
     FaceMesh: typeof import('@mediapipe/face_mesh').FaceMesh;
+    Hands: typeof import('@mediapipe/hands').Hands;
+    HAND_CONNECTIONS: import('@mediapipe/hands').LandmarkConnectionArray;
   }
 }
 
@@ -24,9 +29,24 @@ const playOriginalButton = document.getElementById('playOriginalButton') as HTML
 const playButton = document.getElementById('playButton') as HTMLButtonElement | null;
 const clearButton = document.getElementById('clearButton') as HTMLButtonElement | null;
 const retryCameraButton = document.getElementById('retryCameraButton') as HTMLButtonElement | null;
+const pausePlaybackButton = document.getElementById('pausePlaybackButton') as HTMLButtonElement | null;
+const setStartButton = document.getElementById('setStartButton') as HTMLButtonElement | null;
+const setEndButton = document.getElementById('setEndButton') as HTMLButtonElement | null;
+const resetTrimButton = document.getElementById('resetTrimButton') as HTMLButtonElement | null;
+const saveTrimmedCopyButton = document.getElementById('saveTrimmedCopyButton') as HTMLButtonElement | null;
+const frameCounterElement = document.getElementById('frameCounter') as HTMLElement | null;
+const cameraModeButton = document.getElementById('cameraModeButton') as HTMLButtonElement | null;
+const fileModeButton = document.getElementById('fileModeButton') as HTMLButtonElement | null;
+const videoFileRow = document.getElementById('videoFileRow') as HTMLElement | null;
+const videoFileInput = document.getElementById('videoFileInput') as HTMLInputElement | null;
+const resetVideoButton = document.getElementById('resetVideoButton') as HTMLButtonElement | null;
 const cameraSelect = document.getElementById('cameraSelect') as HTMLSelectElement | null;
 const recordingSelect = document.getElementById('recordingSelect') as HTMLSelectElement | null;
 const deleteRecordingButton = document.getElementById('deleteRecordingButton') as HTMLButtonElement | null;
+const exportRecordingButton = document.getElementById('exportRecordingButton') as HTMLButtonElement | null;
+const exportAllButton = document.getElementById('exportAllButton') as HTMLButtonElement | null;
+const importFileInput = document.getElementById('importFileInput') as HTMLInputElement | null;
+const importOverwriteCheckbox = document.getElementById('importOverwriteCheckbox') as HTMLInputElement | null;
 const saveOriginalVideoCheckbox = document.getElementById('saveOriginalVideoCheckbox') as HTMLInputElement | null;
 const ruleSetSelect = document.getElementById('ruleSetSelect') as HTMLSelectElement | null;
 const saveRuleSetButton = document.getElementById('saveRuleSetButton') as HTMLButtonElement | null;
@@ -45,9 +65,24 @@ if (
   !playButton ||
   !clearButton ||
   !retryCameraButton ||
+  !pausePlaybackButton ||
+  !setStartButton ||
+  !setEndButton ||
+  !resetTrimButton ||
+  !saveTrimmedCopyButton ||
+  !frameCounterElement ||
+  !cameraModeButton ||
+  !fileModeButton ||
+  !videoFileRow ||
+  !videoFileInput ||
+  !resetVideoButton ||
   !cameraSelect ||
   !recordingSelect ||
   !deleteRecordingButton ||
+  !exportRecordingButton ||
+  !exportAllButton ||
+  !importFileInput ||
+  !importOverwriteCheckbox ||
   !saveOriginalVideoCheckbox ||
   !ruleSetSelect ||
   !saveRuleSetButton ||
@@ -114,6 +149,11 @@ const builtInRuleSets: StoredRuleSet[] = [
   },
 ];
 const recordedFrames: PoseFrame[] = [];
+let fullRecordedFrames: PoseFrame[] = [];
+let trimStartFrame = 0;
+let trimEndFrame = 0;
+let playbackPaused = false;
+let pausedElapsedMs = 0;
 let savedRecordings: StoredRecording[] = [];
 let savedRuleSets: StoredRuleSet[] = [];
 let activeRuleSetId = 'default';
@@ -124,16 +164,21 @@ let playback = false;
 let playbackMode: PlaybackMode = 'dance';
 let playbackStart = 0;
 let playbackDuration = 0;
+type DancePanelColumn = 'original' | 'overlap' | 'transformed' | 'explanation';
+let focusedPanel: { row: number; column: DancePanelColumn } | null = null;
+let lastDancePanelRects: { row: number; column: DancePanelColumn; x: number; y: number; width: number; height: number }[] = [];
 let lastCaptureTime = 0;
 const captureInterval = 120;
 let currentLandmarks: PoseLandmark[] | null = null;
 let currentFaceLandmarks: PoseLandmark[] = [];
+let currentHandLandmarks: HandLandmarks = { left: null, right: null };
 let cameraStream: MediaStream | null = null;
 let cameraFrameRequest = 0;
 let cameraRunId = 0;
 let processingCameraFrame = false;
 let poseSolution: Pose | null = null;
 let faceMeshSolution: FaceMesh | null = null;
+let handsSolution: Hands | null = null;
 let selectedCameraId = window.localStorage.getItem(cameraStorageKey) ?? '';
 let cameraRetryCount = 0;
 let cameraStarting = false;
@@ -144,7 +189,10 @@ let activeBpm = builtInRuleSets[0].bpm;
 let originalVideoRecorder: MediaRecorder | null = null;
 let originalVideoChunks: BlobPart[] = [];
 let originalVideoStartedAt = '';
-let originalVideoCompletionStatus = '';
+type InputMode = 'camera' | 'file';
+let inputMode: InputMode = 'camera';
+let currentVideoFile: File | null = null;
+let currentVideoFileUrl: string | null = null;
 
 class CameraRequestTimeout extends Error {
   constructor() {
@@ -159,6 +207,27 @@ function resizeCanvas() {
 }
 
 window.addEventListener('resize', resizeCanvas);
+
+canvas.addEventListener('dblclick', (event) => {
+  if (!playback || playbackMode !== 'dance') return;
+
+  if (focusedPanel) {
+    focusedPanel = null;
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+  const hit = lastDancePanelRects.find((panel) => (
+    x >= panel.x && x <= panel.x + panel.width && y >= panel.y && y <= panel.y + panel.height
+  ));
+  if (hit) focusedPanel = { row: hit.row, column: hit.column };
+});
+
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && focusedPanel) focusedPanel = null;
+});
 
 recordButton.addEventListener('click', () => {
   if (!recording) {
@@ -180,12 +249,95 @@ playOriginalButton.addEventListener('click', () => {
   }
 });
 
+pausePlaybackButton.addEventListener('click', () => {
+  if (!playback) return;
+  if (playbackPaused) {
+    playbackStart = performance.now() - pausedElapsedMs;
+    playbackPaused = false;
+    pausePlaybackButton!.textContent = 'Pause';
+  } else {
+    pausedElapsedMs = performance.now() - playbackStart;
+    playbackPaused = true;
+    pausePlaybackButton!.textContent = 'Resume';
+  }
+  setTrimControlsEnabled();
+});
+
+setStartButton.addEventListener('click', () => {
+  if (!playback || !playbackPaused) return;
+  trimStartFrame = Math.min(frameIndexAtElapsed(pausedElapsedMs), trimEndFrame);
+  applyTrim();
+});
+
+setEndButton.addEventListener('click', () => {
+  if (!playback || !playbackPaused) return;
+  trimEndFrame = Math.max(frameIndexAtElapsed(pausedElapsedMs), trimStartFrame);
+  applyTrim();
+});
+
+resetTrimButton.addEventListener('click', () => {
+  if (!playback || fullRecordedFrames.length === 0) return;
+  trimStartFrame = 0;
+  trimEndFrame = fullRecordedFrames.length - 1;
+  applyTrim();
+});
+
+saveTrimmedCopyButton.addEventListener('click', () => {
+  saveTrimmedCopy();
+});
+
 recordingSelect.addEventListener('change', () => {
   loadRecordingById(recordingSelect.value);
 });
 
 deleteRecordingButton.addEventListener('click', () => {
   deleteSelectedRecording();
+});
+
+exportRecordingButton.addEventListener('click', async () => {
+  if (!activeRecordingId) return;
+  try {
+    await exportRecording(activeRecordingId);
+    updateStatus('exported recording');
+  } catch (error) {
+    console.warn('Export failed:', error);
+    updateStatus('export failed');
+  }
+});
+
+exportAllButton.addEventListener('click', async () => {
+  try {
+    await exportAllRecordings();
+    updateStatus('exported all recordings');
+  } catch (error) {
+    console.warn('Export all failed:', error);
+    updateStatus(error instanceof Error ? error.message : 'export failed');
+  }
+});
+
+importFileInput.addEventListener('change', async () => {
+  const file = importFileInput.files?.[0];
+  if (!file) return;
+
+  updateStatus('importing…');
+  try {
+    const result = await importRecordingsFromFile(file, { overwrite: importOverwriteCheckbox!.checked });
+    savedRecordings = await getAllRecordings();
+    renderRecordingSelect();
+    if (result.errors.length > 0) {
+      console.warn('Import errors:', result.errors);
+    }
+    updateStatus(
+      result.errors.length > 0
+        ? `imported ${result.imported}, ${result.skipped} failed (see console)`
+        : `imported ${result.imported} recording${result.imported === 1 ? '' : 's'}`,
+    );
+  } catch (error) {
+    console.warn('Import failed:', error);
+    updateStatus('import failed');
+  } finally {
+    importFileInput.value = '';
+  }
 });
 
 ruleSetSelect.addEventListener('change', () => {
@@ -221,17 +373,45 @@ for (const [index, select] of panelRuleSelects.entries()) {
 
 clearButton.addEventListener('click', () => {
   recordedFrames.length = 0;
+  fullRecordedFrames = [];
+  trimStartFrame = 0;
+  trimEndFrame = 0;
   playback = false;
+  playbackPaused = false;
+  focusedPanel = null;
   activeRecordingId = '';
   playOriginalButton!.disabled = true;
   playButton!.disabled = true;
   recordButton!.textContent = 'Start Recording';
   recordingSelect!.value = '';
+  setTrimControlsEnabled();
   updateStatus('motion cleared');
 });
 
 retryCameraButton.addEventListener('click', () => {
+  if (inputMode !== 'camera') {
+    switchInputMode('camera');
+    return;
+  }
   initializeCamera(true);
+});
+
+cameraModeButton.addEventListener('click', () => {
+  switchInputMode('camera');
+});
+
+fileModeButton.addEventListener('click', () => {
+  switchInputMode('file');
+});
+
+videoFileInput.addEventListener('change', () => {
+  const file = videoFileInput.files?.[0];
+  if (file) loadVideoFile(file);
+});
+
+resetVideoButton.addEventListener('click', () => {
+  video.currentTime = 0;
+  video.pause();
 });
 
 cameraSelect.addEventListener('change', () => {
@@ -278,6 +458,64 @@ function getUserMediaWithTimeout(constraints: MediaStreamConstraints) {
 function setPlaybackButtonsEnabled(enabled: boolean) {
   playOriginalButton!.disabled = !enabled;
   playButton!.disabled = !enabled;
+}
+
+function setTrimControlsEnabled() {
+  pausePlaybackButton!.disabled = !playback;
+  setStartButton!.disabled = !(playback && playbackPaused);
+  setEndButton!.disabled = !(playback && playbackPaused);
+  resetTrimButton!.disabled = !playback;
+  saveTrimmedCopyButton!.disabled = !(playback && recordedFrames.length >= 4);
+  if (!playback) pausePlaybackButton!.textContent = 'Pause';
+}
+
+function frameIndexAtElapsed(elapsedMs: number): number {
+  if (recordedFrames.length === 0 || playbackDuration <= 0) return 0;
+  const target = recordedFrames[0].t + (elapsedMs % playbackDuration);
+  for (let i = 0; i < recordedFrames.length; i += 1) {
+    if (recordedFrames[i].t >= target) return i;
+  }
+  return recordedFrames.length - 1;
+}
+
+function applyTrim() {
+  recordedFrames.length = 0;
+  recordedFrames.push(...copyFrames(fullRecordedFrames.slice(trimStartFrame, trimEndFrame + 1)));
+  playbackDuration = recordedFrames.length > 1
+    ? recordedFrames[recordedFrames.length - 1].t - recordedFrames[0].t
+    : 0;
+  if (playbackPaused) {
+    pausedElapsedMs = 0;
+  } else {
+    playbackStart = performance.now();
+  }
+  setPlaybackButtonsEnabled(recordedFrames.length > 1);
+  setTrimControlsEnabled();
+  updateStatus(`trimmed to frames ${trimStartFrame + 1}-${trimEndFrame + 1}`);
+}
+
+async function saveTrimmedCopy() {
+  if (recordedFrames.length < 4 || playbackDuration <= 0) return;
+
+  const createdAt = new Date();
+  const sourceLabel = savedRecordings.find((item) => item.id === activeRecordingId)?.label ?? 'Motion';
+  const recording: StoredRecording = {
+    id: `${createdAt.getTime()}`,
+    label: `${sourceLabel} (trimmed)`,
+    createdAt: createdAt.toISOString(),
+    duration: playbackDuration,
+    frames: copyFrames(recordedFrames),
+  };
+
+  try {
+    await saveRecording(recording);
+    savedRecordings = [recording, ...savedRecordings];
+    renderRecordingSelect();
+    updateStatus(`saved trimmed copy: ${recording.label}`);
+  } catch (error) {
+    console.warn('Could not save trimmed copy:', error);
+    updateStatus('could not save trimmed copy');
+  }
 }
 
 async function loadSavedRecordings() {
@@ -439,6 +677,7 @@ function renderRecordingSelect() {
     recordingSelect!.appendChild(option);
     recordingSelect!.disabled = true;
     deleteRecordingButton!.disabled = true;
+    exportRecordingButton!.disabled = true;
     return;
   }
 
@@ -457,6 +696,15 @@ function renderRecordingSelect() {
   recordingSelect!.disabled = false;
   recordingSelect!.value = activeRecordingId;
   deleteRecordingButton!.disabled = !activeRecordingId;
+  exportRecordingButton!.disabled = !activeRecordingId;
+}
+
+function copyHandLandmarks(hand?: HandLandmarks): HandLandmarks | undefined {
+  if (!hand) return undefined;
+  return {
+    left: hand.left ? hand.left.map((landmark) => ({ ...landmark })) : null,
+    right: hand.right ? hand.right.map((landmark) => ({ ...landmark })) : null,
+  };
 }
 
 function copyFrames(frames: PoseFrame[]) {
@@ -464,6 +712,7 @@ function copyFrames(frames: PoseFrame[]) {
     t: frame.t,
     landmarks: frame.landmarks.map((landmark) => ({ ...landmark })),
     faceLandmarks: frame.faceLandmarks.map((landmark) => ({ ...landmark })),
+    ...(frame.handLandmarks ? { handLandmarks: copyHandLandmarks(frame.handLandmarks) } : {}),
   }));
 }
 
@@ -482,6 +731,10 @@ function normalizeFrames(frames: PoseFrame[]) {
       z: Number.isFinite(landmark.z) ? landmark.z : 0,
       visibility: landmark.visibility ?? 1,
     })),
+    // Absent on recordings made before hand tracking was added; left undefined
+    // rather than defaulted so downstream rendering treats it the same as
+    // "no hands detected this frame" instead of drawing empty hand glyphs.
+    ...(frame.handLandmarks ? { handLandmarks: copyHandLandmarks(frame.handLandmarks) } : {}),
   }));
 }
 
@@ -490,13 +743,20 @@ function activateRecording(recording: StoredRecording, statusText: string) {
   recordedFrames.push(...normalizeFrames(recording.frames));
   activeRecordingId = recording.id;
   playback = false;
+  playbackPaused = false;
   playbackDuration = recording.duration;
+  fullRecordedFrames = copyFrames(recordedFrames);
+  trimStartFrame = 0;
+  trimEndFrame = recordedFrames.length - 1;
+  setTrimControlsEnabled();
   setPlaybackButtonsEnabled(recordedFrames.length > 1);
   renderRecordingSelect();
   updateStatus(statusText);
 }
 
-async function saveCurrentRecording(): Promise<{ recording: StoredRecording; persisted: boolean } | null> {
+async function saveCurrentRecording(
+  originalVideo?: StoredRecording['originalVideo'],
+): Promise<{ recording: StoredRecording; persisted: boolean } | null> {
   if (recordedFrames.length < 4 || playbackDuration <= 0) {
     return null;
   }
@@ -508,6 +768,7 @@ async function saveCurrentRecording(): Promise<{ recording: StoredRecording; per
     createdAt: createdAt.toISOString(),
     duration: playbackDuration,
     frames: copyFrames(recordedFrames),
+    ...(originalVideo ? { originalVideo } : {}),
   };
 
   try {
@@ -524,6 +785,7 @@ async function loadRecordingById(id: string) {
   if (!id) {
     activeRecordingId = '';
     deleteRecordingButton!.disabled = true;
+    exportRecordingButton!.disabled = true;
     return;
   }
 
@@ -558,9 +820,15 @@ async function deleteSelectedRecording() {
   savedRecordings = savedRecordings.filter((item) => item.id !== activeRecordingId);
   activeRecordingId = '';
   recordedFrames.length = 0;
+  fullRecordedFrames = [];
+  trimStartFrame = 0;
+  trimEndFrame = 0;
   playback = false;
+  playbackPaused = false;
+  focusedPanel = null;
   playbackDuration = 0;
   setPlaybackButtonsEnabled(false);
+  setTrimControlsEnabled();
   renderRecordingSelect();
   updateStatus(deleted ? `deleted ${deleted.label}` : 'saved motion deleted');
 }
@@ -612,6 +880,73 @@ function stopCameraStream() {
   processingCameraFrame = false;
 }
 
+function stopFileVideo() {
+  video.pause();
+  if (currentVideoFileUrl) {
+    URL.revokeObjectURL(currentVideoFileUrl);
+    currentVideoFileUrl = null;
+  }
+  if (video.hasAttribute('src')) {
+    video.removeAttribute('src');
+    video.load();
+  }
+  video.controls = false;
+  video.loop = false;
+  currentVideoFile = null;
+}
+
+async function loadVideoFile(file: File) {
+  stopCameraStream();
+  stopFileVideo();
+
+  currentVideoFile = file;
+  updateStatus('loading video file');
+
+  poseSolution = createPoseSolution();
+  faceMeshSolution = createFaceMeshSolution();
+  handsSolution = createHandsSolutionSafe();
+
+  const url = URL.createObjectURL(file);
+  currentVideoFileUrl = url;
+  video.srcObject = null;
+  video.src = url;
+  video.controls = true;
+  video.loop = true;
+
+  video.addEventListener('error', () => {
+    updateStatus('failed to load video file');
+    console.warn('Video file load failed:', video.error);
+  }, { once: true });
+
+  try {
+    await video.play();
+  } catch (error) {
+    console.warn('Video file playback failed to start automatically:', error);
+  }
+
+  const runId = cameraRunId;
+  startCameraFrameLoop(runId);
+  updateStatus(handsUnavailable
+    ? 'video file ready (hand tracking unavailable) — analyzing footage'
+    : 'video file ready — analyzing footage');
+}
+
+function switchInputMode(mode: InputMode) {
+  if (inputMode === mode) return;
+  inputMode = mode;
+  cameraModeButton!.classList.toggle('mode-active', mode === 'camera');
+  fileModeButton!.classList.toggle('mode-active', mode === 'file');
+  videoFileRow!.style.display = mode === 'file' ? '' : 'none';
+
+  if (mode === 'camera') {
+    stopFileVideo();
+    initializeCamera(true);
+  } else {
+    stopCameraStream();
+    updateStatus('choose a video file');
+  }
+}
+
 function createPoseSolution() {
   const pose = new window.Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
@@ -640,27 +975,61 @@ function createFaceMeshSolution() {
   return faceMesh;
 }
 
+function createHandsSolution() {
+  const hands = new window.Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
+  });
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+  hands.onResults(handleHandsResults);
+  return hands;
+}
+
+let handsUnavailable = false;
+
+// Hand tracking is additive — if it fails to initialize (e.g. the CDN script
+// didn't load), body/face tracking should keep working rather than the whole
+// camera/video pipeline failing.
+function createHandsSolutionSafe(): Hands | null {
+  try {
+    const hands = createHandsSolution();
+    handsUnavailable = false;
+    return hands;
+  } catch (error) {
+    handsUnavailable = true;
+    console.warn('Hand tracking initialization failed:', error);
+    return null;
+  }
+}
+
 function startCameraFrameLoop(runId: number) {
   const tick = async () => {
     if (runId !== cameraRunId) return;
 
     if (video.readyState >= 2 && poseSolution && faceMeshSolution && !processingCameraFrame) {
       processingCameraFrame = true;
-      try {
-        await poseSolution.send({ image: video });
-      } catch (error) {
-        currentLandmarks = null;
-        console.warn('Pose frame failed:', error);
+      const sends: Promise<void>[] = [
+        poseSolution.send({ image: video }).catch((error) => {
+          currentLandmarks = null;
+          console.warn('Pose frame failed:', error);
+        }),
+        faceMeshSolution.send({ image: video }).catch((error) => {
+          currentFaceLandmarks = [];
+          console.warn('FaceMesh frame failed:', error);
+        }),
+      ];
+      if (handsSolution) {
+        sends.push(handsSolution.send({ image: video }).catch((error) => {
+          currentHandLandmarks = { left: null, right: null };
+          console.warn('Hands frame failed:', error);
+        }));
       }
-
-      try {
-        await faceMeshSolution.send({ image: video });
-      } catch (error) {
-        currentFaceLandmarks = [];
-        console.warn('FaceMesh frame failed:', error);
-      } finally {
-        processingCameraFrame = false;
-      }
+      await Promise.all(sends);
+      processingCameraFrame = false;
     }
 
     cameraFrameRequest = requestAnimationFrame(tick);
@@ -684,6 +1053,7 @@ async function initializeCamera(force = false) {
   stopCameraStream();
   poseSolution = createPoseSolution();
   faceMeshSolution = createFaceMeshSolution();
+  handsSolution = createHandsSolutionSafe();
 
   const videoConstraint: MediaTrackConstraints = {
     width: { ideal: 640 },
@@ -725,7 +1095,7 @@ async function initializeCamera(force = false) {
     cameraStarting = false;
     cameraRetryCount = 0;
     retryCameraButton!.textContent = 'Retry Camera';
-    updateStatus('camera ready, move into view');
+    updateStatus(handsUnavailable ? 'camera ready (hand tracking unavailable), move into view' : 'camera ready, move into view');
   } catch (error) {
     cameraStarting = false;
     cameraRetryCount += 1;
@@ -760,6 +1130,24 @@ function handleFaceResults(results: FaceResults) {
   }));
 }
 
+function handleHandsResults(results: HandsResults) {
+  const toPoseLandmarks = (landmarks: HandsResults['multiHandLandmarks'][number]) => landmarks.map((landmark) => ({
+    x: landmark.x,
+    y: landmark.y,
+    z: landmark.z ?? 0,
+    visibility: 1,
+  }));
+
+  let left: PoseLandmark[] | null = null;
+  let right: PoseLandmark[] | null = null;
+  results.multiHandLandmarks?.forEach((landmarks, index) => {
+    const label = results.multiHandedness[index]?.label;
+    if (label === 'Left') left = toPoseLandmarks(landmarks);
+    else if (label === 'Right') right = toPoseLandmarks(landmarks);
+  });
+  currentHandLandmarks = { left, right };
+}
+
 function handlePoseResults(results: PoseResults) {
   if (!results.poseLandmarks) {
     currentLandmarks = null;
@@ -786,6 +1174,10 @@ function capturePose(time: number) {
     t: time,
     landmarks: currentLandmarks.map((landmark) => ({ ...landmark })),
     faceLandmarks: currentFaceLandmarks.map((landmark) => ({ ...landmark })),
+    handLandmarks: {
+      left: currentHandLandmarks.left?.map((landmark) => ({ ...landmark })) ?? null,
+      right: currentHandLandmarks.right?.map((landmark) => ({ ...landmark })) ?? null,
+    },
   });
   lastCaptureTime = time;
 }
@@ -824,7 +1216,6 @@ function startOriginalVideoRecording() {
   }
 
   originalVideoChunks = [];
-  originalVideoCompletionStatus = '';
   originalVideoStartedAt = new Date().toISOString().replace(/[:.]/g, '-');
 
   try {
@@ -841,71 +1232,112 @@ function startOriginalVideoRecording() {
     if (event.data.size > 0) originalVideoChunks.push(event.data);
   });
 
-  originalVideoRecorder.addEventListener('stop', () => {
-    if (originalVideoChunks.length > 0) {
-      const blob = new Blob(originalVideoChunks, {
-        type: originalVideoRecorder?.mimeType || 'video/webm',
-      });
-      downloadBlob(blob, `unnoticed-dance-original-${originalVideoStartedAt}.webm`);
-    }
-    originalVideoChunks = [];
-    if (originalVideoCompletionStatus) updateStatus(originalVideoCompletionStatus);
-  });
-
   originalVideoRecorder.start(1000);
   return true;
 }
 
-function stopOriginalVideoRecording(completionStatus = '') {
-  if (!originalVideoRecorder) return;
-  originalVideoCompletionStatus = completionStatus;
-  if (originalVideoRecorder.state !== 'inactive') {
-    originalVideoRecorder.stop();
-  }
+// Stops the MediaRecorder (if any) and resolves once its 'stop' event has
+// actually finished assembling the Blob, so callers can attach it to a
+// StoredRecording before saving. Always downloads the .webm as before,
+// regardless of whether the caller ends up persisting it.
+function stopOriginalVideoRecording(): Promise<{ blob: Blob; mimeType: string; filename: string } | null> {
+  const recorder = originalVideoRecorder;
   originalVideoRecorder = null;
+  if (!recorder) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const finish = () => {
+      let result: { blob: Blob; mimeType: string; filename: string } | null = null;
+      if (originalVideoChunks.length > 0) {
+        const mimeType = recorder.mimeType || 'video/webm';
+        const blob = new Blob(originalVideoChunks, { type: mimeType });
+        const filename = `unnoticed-dance-original-${originalVideoStartedAt}.webm`;
+        downloadBlob(blob, filename);
+        result = { blob, mimeType, filename };
+      }
+      originalVideoChunks = [];
+      resolve(result);
+    };
+
+    if (recorder.state === 'inactive') {
+      finish();
+    } else {
+      recorder.addEventListener('stop', finish, { once: true });
+      recorder.stop();
+    }
+  });
 }
 
 function startRecording() {
   recording = true;
   playback = false;
+  playbackPaused = false;
+  focusedPanel = null;
   activeRecordingId = '';
   recordedFrames.length = 0;
+  fullRecordedFrames = [];
+  trimStartFrame = 0;
+  trimEndFrame = 0;
   playbackDuration = 0;
   lastCaptureTime = performance.now();
   recordButton!.textContent = 'Stop Recording';
   recordingSelect!.value = '';
   setPlaybackButtonsEnabled(false);
-  const originalVideoStarted = startOriginalVideoRecording();
-  if (originalVideoStarted) {
-    updateStatus('recording body motion and original video');
-  } else if (!saveOriginalVideoCheckbox!.checked) {
-    updateStatus('recording body motion');
+  setTrimControlsEnabled();
+  cameraModeButton!.disabled = true;
+  fileModeButton!.disabled = true;
+
+  if (inputMode === 'camera') {
+    const originalVideoStarted = startOriginalVideoRecording();
+    if (originalVideoStarted) {
+      updateStatus('recording body motion and original video');
+    } else if (!saveOriginalVideoCheckbox!.checked) {
+      updateStatus('recording body motion');
+    }
+  } else {
+    updateStatus(saveOriginalVideoCheckbox!.checked && currentVideoFile
+      ? 'recording body motion (source video will be saved)'
+      : 'recording body motion');
   }
 }
 
 async function stopRecording() {
   recording = false;
   recordButton!.textContent = 'Start Recording';
+  cameraModeButton!.disabled = false;
+  fileModeButton!.disabled = false;
 
   if (recordedFrames.length < 4) {
-    stopOriginalVideoRecording('saved original video; too little motion data');
+    await stopOriginalVideoRecording();
     updateStatus('too little motion, try again');
     return;
   }
 
   playbackDuration = recordedFrames[recordedFrames.length - 1].t - recordedFrames[0].t;
   if (playbackDuration <= 0) {
-    stopOriginalVideoRecording('saved original video; motion data was unstable');
+    await stopOriginalVideoRecording();
     updateStatus('recording unstable, try again');
     return;
   }
 
   activeRecordingId = '';
   recordingSelect!.value = '';
-  const saveResult = await saveCurrentRecording();
+
+  let originalVideo: StoredRecording['originalVideo'];
+  if (inputMode === 'camera') {
+    const recordedVideo = await stopOriginalVideoRecording();
+    if (recordedVideo) originalVideo = recordedVideo;
+  } else if (saveOriginalVideoCheckbox!.checked && currentVideoFile) {
+    originalVideo = {
+      blob: currentVideoFile,
+      mimeType: currentVideoFile.type || 'video/mp4',
+      filename: currentVideoFile.name,
+    };
+  }
+
+  const saveResult = await saveCurrentRecording(originalVideo);
 
   if (!saveResult) {
-    stopOriginalVideoRecording('saved original video; motion data could not be saved');
     setPlaybackButtonsEnabled(false);
     updateStatus('recording could not be saved');
     return;
@@ -916,17 +1348,17 @@ async function stopRecording() {
     savedRecording,
     persisted ? `saved ${savedRecording.label}` : `${savedRecording.label} ready to play (storage full, not saved)`,
   );
-  stopOriginalVideoRecording(
-    persisted ? 'saved motion and original video' : 'storage full; recording not saved to library',
-  );
 }
 
 function startPlayback(mode: PlaybackMode) {
   playback = true;
+  playbackPaused = false;
+  focusedPanel = null;
   playbackMode = mode;
   playbackStart = performance.now();
   recording = false;
   recordButton!.textContent = 'Start Recording';
+  setTrimControlsEnabled();
   updateStatus(mode === 'original' ? 'playing original motion' : 'playing dance');
 }
 
@@ -1090,6 +1522,25 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
+// Hand detections can flicker in and out frame to frame, so interpolating
+// between "present" and "absent" doesn't make sense the way body/face
+// landmarks do — only lerp when both sides agree a hand is there, otherwise
+// snap to whichever side is closer.
+function interpolateHand(from: PoseLandmark[] | null | undefined, to: PoseLandmark[] | null | undefined, t: number): PoseLandmark[] | null {
+  if (from && to && from.length === to.length) {
+    return from.map((landmark, index) => {
+      const next = to[index];
+      return {
+        x: lerp(landmark.x, next.x, t),
+        y: lerp(landmark.y, next.y, t),
+        z: lerp(landmark.z ?? 0, next.z ?? 0, t),
+        visibility: 1,
+      };
+    });
+  }
+  return (t < 0.5 ? from : to) ?? null;
+}
+
 function interpolateFrame(from: PoseFrame, to: PoseFrame, t: number): PoseFrame {
   const faceCount = Math.min(from.faceLandmarks.length, to.faceLandmarks.length);
   return {
@@ -1113,6 +1564,12 @@ function interpolateFrame(from: PoseFrame, to: PoseFrame, t: number): PoseFrame 
         visibility: lerp(landmark.visibility, next.visibility, t),
       };
     }),
+    ...(from.handLandmarks || to.handLandmarks ? {
+      handLandmarks: {
+        left: interpolateHand(from.handLandmarks?.left, to.handLandmarks?.left, t),
+        right: interpolateHand(from.handLandmarks?.right, to.handLandmarks?.right, t),
+      },
+    } : {}),
   };
 }
 
@@ -1315,6 +1772,40 @@ function fillTorso(
   ctx.restore();
 }
 
+function drawHandGlyph(
+  hand: PoseLandmark[] | null | undefined,
+  toPoint: (landmark: PoseLandmark) => PoseLandmark,
+  alpha: number,
+  stroke: string,
+  lineWidth: number,
+) {
+  if (!hand || hand.length === 0 || !window.HAND_CONNECTIONS) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = stroke;
+  ctx.fillStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  for (const [a, b] of window.HAND_CONNECTIONS) {
+    const first = hand[a];
+    const second = hand[b];
+    if (!first || !second) continue;
+    const p1 = toPoint(first);
+    const p2 = toPoint(second);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+  for (const landmark of hand) {
+    const point = toPoint(landmark);
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, lineWidth * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawSkeleton(landmarks: PoseLandmark[], alpha: number, stroke: string) {
   const referenceZ = depthReference(landmarks);
 
@@ -1356,11 +1847,14 @@ function drawSkeleton(landmarks: PoseLandmark[], alpha: number, stroke: string) 
   }
   ctx.restore();
   drawFaceGlyph(landmarks, currentFaceLandmarks, toCanvas, alpha, stroke, Math.min(canvas.width, canvas.height));
+  drawHandGlyph(currentHandLandmarks.left, toCanvas, alpha, stroke, 2.4);
+  drawHandGlyph(currentHandLandmarks.right, toCanvas, alpha, stroke, 2.4);
 }
 
 function drawSkeletonInPanel(
   landmarks: PoseLandmark[],
   faceLandmarks: PoseLandmark[],
+  handLandmarks: HandLandmarks | undefined,
   panelX: number,
   panelY: number,
   panelWidth: number,
@@ -1423,6 +1917,8 @@ function drawSkeletonInPanel(
     ctx.fill();
   }
   drawFaceGlyph(landmarks, faceLandmarks, toPanel, alpha, stroke, baseSize);
+  drawHandGlyph(handLandmarks?.left, toPanel, alpha, stroke, Math.max(1.2, baseSize * 0.012));
+  drawHandGlyph(handLandmarks?.right, toPanel, alpha, stroke, Math.max(1.2, baseSize * 0.012));
 
   ctx.restore();
 }
@@ -1462,7 +1958,7 @@ function drawOriginalPlayback(elapsedMilliseconds: number) {
   ctx.fillText('Original replay', margin + 14, topInset + 26);
   ctx.restore();
 
-  drawSkeletonInPanel(frame.landmarks, frame.faceLandmarks, margin, topInset, panelWidth, panelHeight, 0.96, 'rgba(255,255,255,0.96)');
+  drawSkeletonInPanel(frame.landmarks, frame.faceLandmarks, frame.handLandmarks, margin, topInset, panelWidth, panelHeight, 0.96, 'rgba(255,255,255,0.96)');
 }
 
 function drawDanceOverlay(elapsedMilliseconds: number) {
@@ -1474,7 +1970,38 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
 
   const baseLandmarks = originalFrame.landmarks.map((landmark) => ({ ...landmark }));
   const baseFaceLandmarks = originalFrame.faceLandmarks.map((landmark) => ({ ...landmark }));
+  // Hands, like the face, aren't run through the dance transform math below —
+  // they stay anchored to their recorded position, same treatment as the face.
+  const baseHandLandmarks = copyHandLandmarks(originalFrame.handLandmarks);
   const variations = getActivePanelRules();
+  if (focusedPanel && focusedPanel.row >= variations.length) focusedPanel = null;
+
+  const computeTransformedFrame = (index: number, variation: VariationRule) => {
+    const animatedShift = variation.kind === 'wave'
+      ? Math.sin(elapsedMilliseconds / 500) * 10 + Math.cos(elapsedMilliseconds / 700) * 8
+      : variation.kind === 'upperPull'
+        ? Math.sin(elapsedMilliseconds / 680) * 18
+        : variation.kind === 'centerRipple'
+          ? Math.sin(elapsedMilliseconds / 360) * 32
+          : variation.kind === 'floatDrift'
+            ? Math.cos(elapsedMilliseconds / 820) * 24
+            : 0;
+    const rawShiftedTime = (loopTime + variation.timeShift + animatedShift + playbackDuration) % playbackDuration;
+    const shiftedTime = variation.kind === 'gestureAccent'
+      ? gestureAccentTime(rawShiftedTime)
+      : variation.kind === 'rhythmLock'
+        ? rhythmLockTime(rawShiftedTime)
+        : rawShiftedTime;
+    const sourceFrame = sampleFrameAt(shiftedTime);
+    if (!sourceFrame) return null;
+    const transformedLandmarks = transformPoseForDance(sourceFrame, elapsedMilliseconds, index, variation.kind, variation.strength);
+    for (let headIndex = 0; headIndex <= 10; headIndex += 1) {
+      if (baseLandmarks[headIndex]) transformedLandmarks[headIndex] = { ...baseLandmarks[headIndex] };
+    }
+    const transformedFaceLandmarks = baseFaceLandmarks.map((landmark) => ({ ...landmark }));
+    return { transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks: baseHandLandmarks };
+  };
+
   const margin = 20;
   const topInset = canvasTopInset();
   const gap = 16;
@@ -1495,13 +2022,13 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   const rightPanelX = centerPanelX + motionPanelWidth + gap;
   const explanationPanelX = rightPanelX + motionPanelWidth + gap;
 
-  const drawPanel = (landmarks: PoseLandmark[], faceLandmarks: PoseLandmark[], x: number, y: number, width: number, alpha: number, stroke: string) => {
-    drawSkeletonInPanel(landmarks, faceLandmarks, x, y, width, panelHeight, alpha, stroke);
+  const drawPanel = (landmarks: PoseLandmark[], faceLandmarks: PoseLandmark[], handLandmarks: HandLandmarks | undefined, x: number, y: number, width: number, height: number, alpha: number, stroke: string) => {
+    drawSkeletonInPanel(landmarks, faceLandmarks, handLandmarks, x, y, width, height, alpha, stroke);
   };
 
-  const drawOverlapPanel = (transformedLandmarks: PoseLandmark[], transformedFaceLandmarks: PoseLandmark[], x: number, y: number) => {
-    drawPanel(baseLandmarks, baseFaceLandmarks, x, y, motionPanelWidth, 0.7, 'rgba(255,255,255,0.95)');
-    drawPanel(transformedLandmarks, transformedFaceLandmarks, x, y, motionPanelWidth, 0.72, 'rgba(92, 214, 255, 0.96)');
+  const drawOverlapPanel = (transformedLandmarks: PoseLandmark[], transformedFaceLandmarks: PoseLandmark[], transformedHandLandmarks: HandLandmarks | undefined, x: number, y: number, width: number, height: number) => {
+    drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, x, y, width, height, 0.7, 'rgba(255,255,255,0.95)');
+    drawPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, x, y, width, height, 0.72, 'rgba(92, 214, 255, 0.96)');
   };
 
   const drawArrow = (fromX: number, fromY: number, toX: number, toY: number, color: string) => {
@@ -1551,14 +2078,14 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     ctx.restore();
   };
 
-  const drawExplanationPanel = (x: number, y: number, rule: VariationRule) => {
+  const drawExplanationPanel = (x: number, y: number, width: number, height: number, rule: VariationRule) => {
     const padding = 10;
     const top = y + padding;
-    const bottom = y + panelHeight - padding;
-    const midY = y + panelHeight * 0.56;
-    const leftX = x + explanationPanelWidth * 0.3;
-    const rightX = x + explanationPanelWidth * 0.68;
-    const scale = Math.min(explanationPanelWidth, panelHeight) * 0.48;
+    const bottom = y + height - padding;
+    const midY = y + height * 0.56;
+    const leftX = x + width * 0.3;
+    const rightX = x + width * 0.68;
+    const scale = Math.min(width, height) * 0.48;
     const notesByKind: Record<VariationKind, string[]> = {
       wave: ['Sway', 'Lift', 'Offset'],
       upperPull: ['Upper', 'Pull', 'Lower hold'],
@@ -1571,10 +2098,10 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
 
     ctx.save();
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.fillRect(x + 4, y + 4, explanationPanelWidth - 8, panelHeight - 8);
+    ctx.fillRect(x + 4, y + 4, width - 8, height - 8);
     ctx.strokeStyle = 'rgba(92, 214, 255, 0.42)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(x + 4, y + 4, explanationPanelWidth - 8, panelHeight - 8);
+    ctx.strokeRect(x + 4, y + 4, width - 8, height - 8);
 
     ctx.fillStyle = 'rgba(255,255,255,0.88)';
     ctx.font = '12px sans-serif';
@@ -1609,7 +2136,15 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     ctx.font = '11px sans-serif';
     ctx.fillText(notes[0], x + padding, bottom - 22);
     ctx.fillText(notes[1], x + padding, bottom - 10);
-    ctx.fillText(notes[2], x + padding + Math.min(88, explanationPanelWidth * 0.48), bottom - 10);
+    ctx.fillText(notes[2], x + padding + Math.min(88, width * 0.48), bottom - 10);
+    ctx.restore();
+  };
+
+  const drawFocusLabel = (text: string, x: number, y: number) => {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.86)';
+    ctx.font = '15px sans-serif';
+    ctx.fillText(`${text} — double-click or Esc to exit`, x + 14, y + 26);
     ctx.restore();
   };
 
@@ -1618,37 +2153,63 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
+  if (focusedPanel) {
+    const variation = variations[focusedPanel.row];
+    const x = margin;
+    const y = topInset;
+    const width = canvas.width - margin * 2;
+    const height = canvas.height - topInset - margin;
+
+    if (focusedPanel.column === 'original') {
+      drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, x, y, width, height, 0.95, 'rgba(255,255,255,0.95)');
+      drawFocusLabel('Original', x, y);
+    } else if (focusedPanel.column === 'explanation') {
+      drawExplanationPanel(x, y, width, height, variation);
+    } else {
+      const result = computeTransformedFrame(focusedPanel.row, variation);
+      if (result) {
+        const { transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks } = result;
+        if (focusedPanel.column === 'overlap') {
+          drawOverlapPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, x, y, width, height);
+          drawFocusLabel(`${variation.name} overlap`, x, y);
+        } else {
+          drawPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, x, y, width, height, 0.96, 'rgba(92, 214, 255, 0.96)');
+          drawFocusLabel(`${variation.name} transformed`, x, y);
+        }
+      }
+    }
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(92, 214, 255, 0.42)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 4, y + 4, width - 8, height - 8);
+    ctx.restore();
+    return;
+  }
+
+  lastDancePanelRects = [];
+
   for (const [index, variation] of variations.entries()) {
     const panelY = topInset + index * (panelHeight + rowGap);
-    const animatedShift = variation.kind === 'wave'
-      ? Math.sin(elapsedMilliseconds / 500) * 10 + Math.cos(elapsedMilliseconds / 700) * 8
-      : variation.kind === 'upperPull'
-        ? Math.sin(elapsedMilliseconds / 680) * 18
-        : variation.kind === 'centerRipple'
-          ? Math.sin(elapsedMilliseconds / 360) * 32
-          : variation.kind === 'floatDrift'
-            ? Math.cos(elapsedMilliseconds / 820) * 24
-            : 0;
-    const rawShiftedTime = (loopTime + variation.timeShift + animatedShift + playbackDuration) % playbackDuration;
-    const shiftedTime = variation.kind === 'gestureAccent'
-      ? gestureAccentTime(rawShiftedTime)
-      : variation.kind === 'rhythmLock'
-        ? rhythmLockTime(rawShiftedTime)
-        : rawShiftedTime;
-    const sourceFrame = sampleFrameAt(shiftedTime);
-    if (!sourceFrame) continue;
-    const transformedLandmarks = transformPoseForDance(sourceFrame, elapsedMilliseconds, index, variation.kind, variation.strength);
-    for (let headIndex = 0; headIndex <= 10; headIndex += 1) {
-      if (baseLandmarks[headIndex]) transformedLandmarks[headIndex] = { ...baseLandmarks[headIndex] };
-    }
-    const transformedFaceLandmarks = baseFaceLandmarks.map((landmark) => ({ ...landmark }));
+    const result = computeTransformedFrame(index, variation);
+    if (!result) continue;
+    const { transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks } = result;
 
-    drawOverlapPanel(transformedLandmarks, transformedFaceLandmarks, centerPanelX, panelY);
-    drawPanel(transformedLandmarks, transformedFaceLandmarks, rightPanelX, panelY, motionPanelWidth, 0.96, 'rgba(92, 214, 255, 0.96)');
-    drawExplanationPanel(explanationPanelX, panelY, variation);
+    drawOverlapPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, centerPanelX, panelY, motionPanelWidth, panelHeight);
+    drawPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, rightPanelX, panelY, motionPanelWidth, panelHeight, 0.96, 'rgba(92, 214, 255, 0.96)');
+    drawExplanationPanel(explanationPanelX, panelY, explanationPanelWidth, panelHeight, variation);
 
     if (index === 0) {
-      drawPanel(baseLandmarks, baseFaceLandmarks, leftPanelX, panelY, originalPanelWidth, 0.95, 'rgba(255,255,255,0.95)');
+      drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, leftPanelX, panelY, originalPanelWidth, panelHeight, 0.95, 'rgba(255,255,255,0.95)');
+    }
+
+    lastDancePanelRects.push(
+      { row: index, column: 'overlap', x: centerPanelX, y: panelY, width: motionPanelWidth, height: panelHeight },
+      { row: index, column: 'transformed', x: rightPanelX, y: panelY, width: motionPanelWidth, height: panelHeight },
+      { row: index, column: 'explanation', x: explanationPanelX, y: panelY, width: explanationPanelWidth, height: panelHeight },
+    );
+    if (index === 0) {
+      lastDancePanelRects.push({ row: 0, column: 'original', x: leftPanelX, y: panelY, width: originalPanelWidth, height: panelHeight });
     }
 
     ctx.save();
@@ -1698,13 +2259,15 @@ function drawFrame() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   if (playback) {
-    const elapsed = performance.now() - playbackStart;
+    const elapsed = playbackPaused ? pausedElapsedMs : performance.now() - playbackStart;
+    frameCounterElement!.textContent = `Frame: ${frameIndexAtElapsed(elapsed) + 1} / ${recordedFrames.length}`;
     if (playbackMode === 'original') {
       drawOriginalPlayback(elapsed);
     } else {
       drawDanceOverlay(elapsed);
     }
   } else {
+    frameCounterElement!.textContent = 'Frame: -';
     drawCameraBackground();
     drawLivePose();
 

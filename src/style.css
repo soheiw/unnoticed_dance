@@ -74,6 +74,10 @@ button:disabled, select:disabled {
   cursor: not-allowed;
 }
 
+button.mode-active {
+  background: rgba(92, 214, 255, 0.28);
+}
+
 input[type="range"],
 input[type="number"],
 input[type="checkbox"] {
