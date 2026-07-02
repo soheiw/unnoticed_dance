@@ -1482,10 +1482,15 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   const rowCount = variations.length;
   const panelHeight = (canvas.height - topInset - margin - rowGap * (rowCount - 1)) / rowCount;
   const totalWidth = canvas.width - margin * 2 - gap * 3;
-  const originalPanelWidth = totalWidth * 0.18;
-  const explanationPanelWidth = totalWidth * 0.18;
-  const motionPanelWidth = (totalWidth - originalPanelWidth - explanationPanelWidth) / 2;
-  const leftPanelX = margin;
+  // Cap each panel's width relative to its height so panels stay close to the
+  // aspect ratio of the person inside them instead of stretching into flat,
+  // mostly-empty strips when many rows are stacked into a short canvas.
+  const maxPanelAspect = 1.6;
+  const originalPanelWidth = Math.min(totalWidth * 0.18, panelHeight * maxPanelAspect);
+  const explanationPanelWidth = Math.min(totalWidth * 0.18, panelHeight * maxPanelAspect * 1.3);
+  const motionPanelWidth = Math.min((totalWidth - originalPanelWidth - explanationPanelWidth) / 2, panelHeight * maxPanelAspect);
+  const usedWidth = originalPanelWidth + explanationPanelWidth + motionPanelWidth * 2 + gap * 3;
+  const leftPanelX = margin + Math.max(0, (canvas.width - margin * 2 - usedWidth) / 2);
   const centerPanelX = leftPanelX + originalPanelWidth + gap;
   const rightPanelX = centerPanelX + motionPanelWidth + gap;
   const explanationPanelX = rightPanelX + motionPanelWidth + gap;

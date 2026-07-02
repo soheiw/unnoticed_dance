@@ -178,6 +178,10 @@ input[type="number"] {
   display: none;
 }
 
+.is-playing .setup-only {
+  display: none;
+}
+
 .is-playing .controls {
   gap: 6px;
   margin: 8px 0 6px;
