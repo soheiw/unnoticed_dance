@@ -1,6 +1,13 @@
 import './style.css';
-import { FaceMesh, type Results as FaceResults } from '@mediapipe/face_mesh';
-import { Pose, type Results as PoseResults } from '@mediapipe/pose';
+import type { FaceMesh, Results as FaceResults } from '@mediapipe/face_mesh';
+import type { Pose, Results as PoseResults } from '@mediapipe/pose';
+
+declare global {
+  interface Window {
+    Pose: typeof import('@mediapipe/pose').Pose;
+    FaceMesh: typeof import('@mediapipe/face_mesh').FaceMesh;
+  }
+}
 
 const root = document.getElementById('app');
 const recordButton = document.getElementById('recordButton') as HTMLButtonElement | null;
@@ -607,7 +614,7 @@ function stopCameraStream() {
 }
 
 function createPoseSolution() {
-  const pose = new Pose({
+  const pose = new window.Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
   });
   pose.setOptions({
@@ -621,7 +628,7 @@ function createPoseSolution() {
 }
 
 function createFaceMeshSolution() {
-  const faceMesh = new FaceMesh({
+  const faceMesh = new window.FaceMesh({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
   });
   faceMesh.setOptions({
