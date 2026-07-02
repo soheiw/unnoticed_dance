@@ -656,7 +656,8 @@ async function initializeCamera(force = false) {
   cameraStarting = true;
   updateStatus('requesting camera permission');
   cameraSelect!.disabled = true;
-  retryCameraButton!.disabled = true;
+  retryCameraButton!.disabled = false;
+  retryCameraButton!.textContent = 'Enable Camera';
 
   if (force) {
     cameraRetryCount = 0;
@@ -696,14 +697,12 @@ async function initializeCamera(force = false) {
     startCameraFrameLoop(runId);
     cameraStarting = false;
     cameraRetryCount = 0;
-    retryCameraButton!.disabled = false;
     retryCameraButton!.textContent = 'Retry Camera';
     updateStatus('camera ready, move into view');
   } catch (error) {
     cameraStarting = false;
     cameraRetryCount += 1;
     cameraSelect!.disabled = false;
-    retryCameraButton!.disabled = false;
     retryCameraButton!.textContent = 'Enable Camera';
 
     if (error instanceof DOMException && error.name === 'NotAllowedError') {
