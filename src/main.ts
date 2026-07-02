@@ -269,6 +269,18 @@ function withTimeout<T>(promise: Promise<T>, timeoutMilliseconds: number, onTime
   });
 }
 
+function getUserMediaWithTimeout(constraints: MediaStreamConstraints) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return Promise.reject(new Error('getUserMedia is not available'));
+  }
+
+  return withTimeout(
+    navigator.mediaDevices.getUserMedia(constraints),
+    12000,
+    () => new CameraRequestTimeout(),
+  );
+}
+
 function setPlaybackButtonsEnabled(enabled: boolean) {
   playOriginalButton!.disabled = !enabled;
   playButton!.disabled = !enabled;
@@ -664,7 +676,6 @@ async function initializeCamera(force = false) {
   }
 
   stopCameraStream();
-  await refreshCameraDevices();
   poseSolution = createPoseSolution();
   faceMeshSolution = createFaceMeshSolution();
 
@@ -675,14 +686,24 @@ async function initializeCamera(force = false) {
   if (selectedCameraId) videoConstraint.deviceId = { exact: selectedCameraId };
 
   try {
-    cameraStream = await withTimeout(
-      navigator.mediaDevices.getUserMedia({
+    try {
+      cameraStream = await getUserMediaWithTimeout({
         video: videoConstraint,
         audio: false,
-      }),
-      12000,
-      () => new CameraRequestTimeout(),
-    );
+      });
+    } catch (error) {
+      if (!selectedCameraId || !(error instanceof DOMException) || error.name !== 'OverconstrainedError') {
+        throw error;
+      }
+
+      selectedCameraId = '';
+      window.localStorage.removeItem(cameraStorageKey);
+      cameraStream = await getUserMediaWithTimeout({
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+    }
+
     video.srcObject = cameraStream;
     video.play().catch((error) => {
       console.warn('Video preview playback failed:', error);
@@ -691,7 +712,7 @@ async function initializeCamera(force = false) {
     const activeTrack = cameraStream.getVideoTracks()[0];
     const activeDeviceId = activeTrack?.getSettings().deviceId;
     if (!selectedCameraId && activeDeviceId) selectedCameraId = activeDeviceId;
-    await refreshCameraDevices();
+    refreshCameraDevices();
 
     const runId = cameraRunId;
     startCameraFrameLoop(runId);
@@ -709,6 +730,8 @@ async function initializeCamera(force = false) {
       updateStatus('camera permission blocked');
     } else if (error instanceof DOMException && error.name === 'NotFoundError') {
       updateStatus('no camera devices found');
+    } else if (error instanceof DOMException && error.name === 'NotReadableError') {
+      updateStatus('camera is busy in another app');
     } else if (error instanceof CameraRequestTimeout) {
       updateStatus('camera permission prompt timed out; check browser camera icon');
     } else if (cameraRetryCount <= 2) {
