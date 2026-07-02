@@ -1012,23 +1012,33 @@ function startCameraFrameLoop(runId: number) {
 
     if (video.readyState >= 2 && poseSolution && faceMeshSolution && !processingCameraFrame) {
       processingCameraFrame = true;
-      const sends: Promise<void>[] = [
-        poseSolution.send({ image: video }).catch((error) => {
-          currentLandmarks = null;
-          console.warn('Pose frame failed:', error);
-        }),
-        faceMeshSolution.send({ image: video }).catch((error) => {
-          currentFaceLandmarks = [];
-          console.warn('FaceMesh frame failed:', error);
-        }),
-      ];
+      // MediaPipe's WASM/GL solutions are not safe to run concurrently against
+      // the same <video> frame — sending to Pose/FaceMesh/Hands in parallel
+      // (e.g. via Promise.all) causes intermittent "memory access out of
+      // bounds" crashes inside the WASM module. Run them one at a time.
+      try {
+        await poseSolution.send({ image: video });
+      } catch (error) {
+        currentLandmarks = null;
+        console.warn('Pose frame failed:', error);
+      }
+
+      try {
+        await faceMeshSolution.send({ image: video });
+      } catch (error) {
+        currentFaceLandmarks = [];
+        console.warn('FaceMesh frame failed:', error);
+      }
+
       if (handsSolution) {
-        sends.push(handsSolution.send({ image: video }).catch((error) => {
+        try {
+          await handsSolution.send({ image: video });
+        } catch (error) {
           currentHandLandmarks = { left: null, right: null };
           console.warn('Hands frame failed:', error);
-        }));
+        }
       }
-      await Promise.all(sends);
+
       processingCameraFrame = false;
     }
 
