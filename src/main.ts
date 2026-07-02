@@ -1938,11 +1938,13 @@ function drawLivePose() {
   drawSkeleton(currentLandmarks, 0.88, 'rgba(255,255,255,0.96)');
 }
 
+// Only called during playback, when the compact .is-playing overlay (BPM +
+// panel selects + status) is already minimized — a small fixed margin lets
+// panels use nearly the full canvas instead of reserving space based on the
+// overlay's height, which wasted a lot of space in columns the overlay
+// doesn't even reach.
 function canvasTopInset() {
-  const overlay = document.querySelector('.overlay') as HTMLElement | null;
-  if (!overlay) return 20;
-  const rect = overlay.getBoundingClientRect();
-  return clamp(rect.bottom + 14, 20, Math.max(20, canvas.height - 260));
+  return 20;
 }
 
 function drawOriginalPlayback(elapsedMilliseconds: number) {
@@ -2019,15 +2021,10 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   const rowCount = variations.length;
   const panelHeight = (canvas.height - topInset - margin - rowGap * (rowCount - 1)) / rowCount;
   const totalWidth = canvas.width - margin * 2 - gap * 3;
-  // Cap each panel's width relative to its height so panels stay close to the
-  // aspect ratio of the person inside them instead of stretching into flat,
-  // mostly-empty strips when many rows are stacked into a short canvas.
-  const maxPanelAspect = 1.6;
-  const originalPanelWidth = Math.min(totalWidth * 0.18, panelHeight * maxPanelAspect);
-  const explanationPanelWidth = Math.min(totalWidth * 0.18, panelHeight * maxPanelAspect * 1.3);
-  const motionPanelWidth = Math.min((totalWidth - originalPanelWidth - explanationPanelWidth) / 2, panelHeight * maxPanelAspect);
-  const usedWidth = originalPanelWidth + explanationPanelWidth + motionPanelWidth * 2 + gap * 3;
-  const leftPanelX = margin + Math.max(0, (canvas.width - margin * 2 - usedWidth) / 2);
+  const originalPanelWidth = totalWidth * 0.18;
+  const explanationPanelWidth = totalWidth * 0.18;
+  const motionPanelWidth = (totalWidth - originalPanelWidth - explanationPanelWidth) / 2;
+  const leftPanelX = margin;
   const centerPanelX = leftPanelX + originalPanelWidth + gap;
   const rightPanelX = centerPanelX + motionPanelWidth + gap;
   const explanationPanelX = rightPanelX + motionPanelWidth + gap;
