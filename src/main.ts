@@ -243,6 +243,10 @@ cameraSelect.addEventListener('change', () => {
   initializeCamera(true);
 });
 
+cameraSelect.addEventListener('pointerdown', () => {
+  refreshCameraDevices();
+});
+
 function updateStatus(text: string) {
   statusElement!.textContent = `Status: ${text}`;
 }
@@ -552,6 +556,7 @@ async function refreshCameraDevices() {
 
     cameraSelect!.value = selectedCameraId;
     cameraSelect!.disabled = devices.length === 0;
+    if (devices.length === 0) updateStatus('no camera devices found');
   } catch (error) {
     console.warn('Could not enumerate cameras:', error);
   }
@@ -631,12 +636,15 @@ function startCameraFrameLoop(runId: number) {
 async function initializeCamera(force = false) {
   if (cameraStarting && !force) return;
   cameraStarting = true;
+  updateStatus('requesting camera permission');
+  cameraSelect!.disabled = true;
 
   if (force) {
     cameraRetryCount = 0;
   }
 
   stopCameraStream();
+  await refreshCameraDevices();
   poseSolution = createPoseSolution();
   faceMeshSolution = createFaceMeshSolution();
 
@@ -652,7 +660,9 @@ async function initializeCamera(force = false) {
       audio: false,
     });
     video.srcObject = cameraStream;
-    await video.play();
+    video.play().catch((error) => {
+      console.warn('Video preview playback failed:', error);
+    });
 
     const activeTrack = cameraStream.getVideoTracks()[0];
     const activeDeviceId = activeTrack?.getSettings().deviceId;
@@ -667,8 +677,13 @@ async function initializeCamera(force = false) {
   } catch (error) {
     cameraStarting = false;
     cameraRetryCount += 1;
+    cameraSelect!.disabled = false;
 
-    if (cameraRetryCount <= 2) {
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      updateStatus('camera permission blocked');
+    } else if (error instanceof DOMException && error.name === 'NotFoundError') {
+      updateStatus('no camera devices found');
+    } else if (cameraRetryCount <= 2) {
       window.setTimeout(() => initializeCamera(true), 800);
       updateStatus('camera busy, retrying…');
     } else {
