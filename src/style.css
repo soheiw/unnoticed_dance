@@ -1,0 +1,257 @@
+:root {
+  color-scheme: dark;
+  background-color: #060610;
+  color: #f7f7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+}
+
+.dance-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.overlay {
+  position: absolute;
+  left: 20px;
+  top: 20px;
+  z-index: 10;
+  color: #f3f3ff;
+  text-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
+  max-width: min(390px, calc(100vw - 40px));
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+button, select {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.84rem;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+select {
+  min-width: 160px;
+  max-width: min(260px, calc(100vw - 40px));
+  appearance: none;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+button:disabled, select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input[type="range"],
+input[type="number"],
+input[type="checkbox"] {
+  accent-color: #5cd6ff;
+}
+
+input[type="number"] {
+  width: 62px;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 10px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.recording-library {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.recording-library label {
+  font-size: 0.74rem;
+  opacity: 0.75;
+}
+
+.recording-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 8px;
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.recording-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.rule-controls {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px 8px;
+  align-items: center;
+  max-width: min(390px, calc(100vw - 40px));
+  margin-bottom: 8px;
+}
+
+.rule-controls > label,
+.panel-rule-grid label {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.panel-rule-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr);
+  gap: 5px 8px;
+  align-items: center;
+}
+
+.panel-rule-grid select {
+  min-width: 0;
+  width: 100%;
+}
+
+.status {
+  margin-top: 5px;
+  font-size: 0.82rem;
+  opacity: 0.88;
+}
+
+.overlay h1 {
+  margin: 0 0 6px;
+  font-size: clamp(1.45rem, 2.1vw, 2.5rem);
+  line-height: 1.05;
+}
+
+.overlay p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  opacity: 0.8;
+}
+
+.is-playing .overlay {
+  max-width: min(360px, calc(100vw - 40px));
+  font-size: 0.78rem;
+}
+
+.is-playing .overlay h1 {
+  font-size: 1.25rem;
+  margin-bottom: 4px;
+}
+
+.is-playing .overlay p {
+  display: none;
+}
+
+.is-playing .controls {
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+
+.is-playing button,
+.is-playing select {
+  padding: 6px 10px;
+  font-size: 0.74rem;
+}
+
+.is-playing select {
+  min-width: 140px;
+  max-width: 230px;
+}
+
+.is-playing input[type="number"] {
+  width: 52px;
+  padding: 6px 8px;
+  font-size: 0.74rem;
+}
+
+.is-playing .recording-library,
+.is-playing .rule-controls {
+  gap: 5px 7px;
+  margin-bottom: 6px;
+}
+
+.is-playing .recording-option {
+  gap: 5px;
+  margin-bottom: 6px;
+  font-size: 0.66rem;
+}
+
+.is-playing .recording-option input {
+  width: 12px;
+  height: 12px;
+}
+
+.is-playing .rule-controls {
+  max-width: min(360px, calc(100vw - 40px));
+}
+
+.is-playing .panel-rule-grid {
+  grid-template-columns: auto minmax(112px, 1fr);
+  gap: 4px 7px;
+}
+
+.is-playing .recording-library label,
+.is-playing .rule-controls > label,
+.is-playing .panel-rule-grid label {
+  font-size: 0.66rem;
+}
+
+.is-playing .status {
+  font-size: 0.74rem;
+}
+
+.camera-preview {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  width: min(220px, calc(100vw - 48px));
+  max-height: min(165px, calc(100vh - 48px));
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  object-fit: cover;
+  transform-origin: center;
+  opacity: 0.96;
+}
+
+.is-playing .camera-preview {
+  width: min(160px, calc(100vw - 48px));
+  max-height: min(120px, calc(100vh - 48px));
+  opacity: 0.68;
+}

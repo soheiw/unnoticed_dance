@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unnoticed Dance</title>
+    <link rel="stylesheet" href="src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div class="overlay">
+        <h1>Unnoticed Dance</h1>
+        <p>Use your webcam to record body motion, then replay it slightly shifted as a dance.</p>
+        <div class="controls">
+          <button id="recordButton" type="button">Start Recording</button>
+          <button id="playOriginalButton" type="button" disabled>Play Original</button>
+          <button id="playButton" type="button" disabled>Play Dance</button>
+          <button id="clearButton" type="button">Clear Motion</button>
+          <button id="retryCameraButton" type="button">Retry Camera</button>
+        </div>
+        <div class="recording-library">
+          <label for="recordingSelect">Saved Motion</label>
+          <select id="recordingSelect">
+            <option value="">No saved recordings</option>
+          </select>
+          <button id="deleteRecordingButton" type="button" disabled>Delete Saved</button>
+        </div>
+        <label class="recording-option" for="saveOriginalVideoCheckbox">
+          <input id="saveOriginalVideoCheckbox" type="checkbox" />
+          Save original video
+        </label>
+        <div class="recording-library">
+          <label for="ruleSetSelect">Rule Set</label>
+          <select id="ruleSetSelect"></select>
+          <button id="saveRuleSetButton" type="button">Save Rules</button>
+          <button id="deleteRuleSetButton" type="button" disabled>Delete Rules</button>
+        </div>
+        <div class="rule-controls">
+          <label for="bpmSlider">BPM</label>
+          <input id="bpmSlider" type="range" min="60" max="180" step="1" value="120" />
+          <input id="bpmInput" type="number" min="60" max="180" step="1" value="120" />
+          <div class="panel-rule-grid">
+            <label for="panelRuleSelect0">Panel 1</label>
+            <select id="panelRuleSelect0"></select>
+            <label for="panelRuleSelect1">Panel 2</label>
+            <select id="panelRuleSelect1"></select>
+            <label for="panelRuleSelect2">Panel 3</label>
+            <select id="panelRuleSelect2"></select>
+            <label for="panelRuleSelect3">Panel 4</label>
+            <select id="panelRuleSelect3"></select>
+            <label for="panelRuleSelect4">Panel 5</label>
+            <select id="panelRuleSelect4"></select>
+          </div>
+        </div>
+        <div class="status">Status: waiting for camera</div>
+      </div>
+    </div>
+    <script type="module" src="src/main.ts"></script>
+  </body>
+</html>
