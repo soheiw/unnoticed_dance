@@ -1,6 +1,15 @@
 import './style.css';
 import type { FaceMesh, Results as FaceResults } from '@mediapipe/face_mesh';
 import type { Pose, Results as PoseResults } from '@mediapipe/pose';
+import {
+  saveRecording,
+  loadRecording,
+  getAllRecordings,
+  deleteRecording,
+  type PoseFrame,
+  type PoseLandmark,
+  type StoredRecording,
+} from './storage';
 
 declare global {
   interface Window {
@@ -64,27 +73,6 @@ root.appendChild(canvas);
 
 const ctx = canvas.getContext('2d')!;
 
-interface PoseLandmark {
-  x: number;
-  y: number;
-  z: number;
-  visibility: number;
-}
-
-interface PoseFrame {
-  t: number;
-  landmarks: PoseLandmark[];
-  faceLandmarks: PoseLandmark[];
-}
-
-interface StoredRecording {
-  id: string;
-  label: string;
-  createdAt: string;
-  duration: number;
-  frames: PoseFrame[];
-}
-
 type VariationKind = 'wave' | 'upperPull' | 'centerRipple' | 'floatDrift' | 'gestureAccent' | 'rhythmLock';
 
 interface VariationRule {
@@ -105,7 +93,6 @@ interface StoredRuleSet {
   builtIn?: boolean;
 }
 
-const storageKey = 'unnoticed-dance-recordings-v2';
 const ruleSetStorageKey = 'unnoticed-dance-rule-sets-v1';
 const cameraStorageKey = 'unnoticed-dance-camera-id-v1';
 const builtInRuleSets: StoredRuleSet[] = [
@@ -293,19 +280,14 @@ function setPlaybackButtonsEnabled(enabled: boolean) {
   playButton!.disabled = !enabled;
 }
 
-function loadSavedRecordings() {
+async function loadSavedRecordings() {
   try {
-    const raw = window.localStorage.getItem(storageKey);
-    savedRecordings = raw ? JSON.parse(raw) as StoredRecording[] : [];
+    savedRecordings = await getAllRecordings();
   } catch (error) {
     console.warn('Failed to load saved recordings:', error);
     savedRecordings = [];
   }
   renderRecordingSelect();
-}
-
-function persistSavedRecordings() {
-  window.localStorage.setItem(storageKey, JSON.stringify(savedRecordings));
 }
 
 function getAllRuleSets() {
@@ -514,7 +496,7 @@ function activateRecording(recording: StoredRecording, statusText: string) {
   updateStatus(statusText);
 }
 
-function saveCurrentRecording(): StoredRecording | null {
+async function saveCurrentRecording(): Promise<{ recording: StoredRecording; persisted: boolean } | null> {
   if (recordedFrames.length < 4 || playbackDuration <= 0) {
     return null;
   }
@@ -528,35 +510,52 @@ function saveCurrentRecording(): StoredRecording | null {
     frames: copyFrames(recordedFrames),
   };
 
-  savedRecordings = [recording, ...savedRecordings].slice(0, 24);
-  persistSavedRecordings();
-  return recording;
+  try {
+    await saveRecording(recording);
+    savedRecordings = [recording, ...savedRecordings];
+    return { recording, persisted: true };
+  } catch (error) {
+    console.warn('Could not persist recording:', error);
+    return { recording, persisted: false };
+  }
 }
 
-function loadRecordingById(id: string) {
+async function loadRecordingById(id: string) {
   if (!id) {
     activeRecordingId = '';
     deleteRecordingButton!.disabled = true;
     return;
   }
 
-  const recording = savedRecordings.find((item) => item.id === id);
-  if (!recording) {
-    updateStatus('saved motion not found');
-    renderRecordingSelect();
-    return;
-  }
+  try {
+    const recording = await loadRecording(id);
+    if (!recording) {
+      updateStatus('saved motion not found');
+      renderRecordingSelect();
+      return;
+    }
 
-  recording.frames = normalizeFrames(recording.frames);
-  activateRecording(recording, `loaded ${recording.label}`);
+    recording.frames = normalizeFrames(recording.frames);
+    activateRecording(recording, `loaded ${recording.label}`);
+  } catch (error) {
+    console.warn('Failed to load recording:', error);
+    updateStatus('failed to load saved motion');
+  }
 }
 
-function deleteSelectedRecording() {
+async function deleteSelectedRecording() {
   if (!activeRecordingId) return;
 
   const deleted = savedRecordings.find((item) => item.id === activeRecordingId);
+  try {
+    await deleteRecording(activeRecordingId);
+  } catch (error) {
+    console.warn('Failed to delete recording:', error);
+    updateStatus('failed to delete saved motion');
+    return;
+  }
+
   savedRecordings = savedRecordings.filter((item) => item.id !== activeRecordingId);
-  persistSavedRecordings();
   activeRecordingId = '';
   recordedFrames.length = 0;
   playback = false;
@@ -884,7 +883,7 @@ function startRecording() {
   }
 }
 
-function stopRecording() {
+async function stopRecording() {
   recording = false;
   recordButton!.textContent = 'Start Recording';
 
@@ -903,17 +902,23 @@ function stopRecording() {
 
   activeRecordingId = '';
   recordingSelect!.value = '';
-  const savedRecording = saveCurrentRecording();
+  const saveResult = await saveCurrentRecording();
 
-  if (!savedRecording) {
+  if (!saveResult) {
     stopOriginalVideoRecording('saved original video; motion data could not be saved');
     setPlaybackButtonsEnabled(false);
     updateStatus('recording could not be saved');
     return;
   }
 
-  activateRecording(savedRecording, `saved ${savedRecording.label}`);
-  stopOriginalVideoRecording('saved motion and original video');
+  const { recording: savedRecording, persisted } = saveResult;
+  activateRecording(
+    savedRecording,
+    persisted ? `saved ${savedRecording.label}` : `${savedRecording.label} ready to play (storage full, not saved)`,
+  );
+  stopOriginalVideoRecording(
+    persisted ? 'saved motion and original video' : 'storage full; recording not saved to library',
+  );
 }
 
 function startPlayback(mode: PlaybackMode) {

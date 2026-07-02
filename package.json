@@ -11,7 +11,8 @@
   "dependencies": {
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/face_mesh": "^0.4.1633559619",
-    "@mediapipe/pose": "^0.5.1675469404"
+    "@mediapipe/pose": "^0.5.1675469404",
+    "idb": "^8.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.1",
