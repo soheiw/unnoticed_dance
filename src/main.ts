@@ -1,7 +1,6 @@
 import './style.css';
 import { FaceMesh, type Results as FaceResults } from '@mediapipe/face_mesh';
 import { Pose, type Results as PoseResults } from '@mediapipe/pose';
-import { Camera } from '@mediapipe/camera_utils';
 
 const root = document.getElementById('app');
 const recordButton = document.getElementById('recordButton') as HTMLButtonElement | null;
@@ -9,6 +8,7 @@ const playOriginalButton = document.getElementById('playOriginalButton') as HTML
 const playButton = document.getElementById('playButton') as HTMLButtonElement | null;
 const clearButton = document.getElementById('clearButton') as HTMLButtonElement | null;
 const retryCameraButton = document.getElementById('retryCameraButton') as HTMLButtonElement | null;
+const cameraSelect = document.getElementById('cameraSelect') as HTMLSelectElement | null;
 const recordingSelect = document.getElementById('recordingSelect') as HTMLSelectElement | null;
 const deleteRecordingButton = document.getElementById('deleteRecordingButton') as HTMLButtonElement | null;
 const saveOriginalVideoCheckbox = document.getElementById('saveOriginalVideoCheckbox') as HTMLInputElement | null;
@@ -29,6 +29,7 @@ if (
   !playButton ||
   !clearButton ||
   !retryCameraButton ||
+  !cameraSelect ||
   !recordingSelect ||
   !deleteRecordingButton ||
   !saveOriginalVideoCheckbox ||
@@ -99,6 +100,7 @@ interface StoredRuleSet {
 
 const storageKey = 'unnoticed-dance-recordings-v2';
 const ruleSetStorageKey = 'unnoticed-dance-rule-sets-v1';
+const cameraStorageKey = 'unnoticed-dance-camera-id-v1';
 const builtInRuleSets: StoredRuleSet[] = [
   {
     id: 'default',
@@ -132,7 +134,13 @@ let lastCaptureTime = 0;
 const captureInterval = 120;
 let currentLandmarks: PoseLandmark[] | null = null;
 let currentFaceLandmarks: PoseLandmark[] = [];
-let camera: Camera | null = null;
+let cameraStream: MediaStream | null = null;
+let cameraFrameRequest = 0;
+let cameraRunId = 0;
+let processingCameraFrame = false;
+let poseSolution: Pose | null = null;
+let faceMeshSolution: FaceMesh | null = null;
+let selectedCameraId = window.localStorage.getItem(cameraStorageKey) ?? '';
 let cameraRetryCount = 0;
 let cameraStarting = false;
 let actionPeakCacheKey = '';
@@ -222,6 +230,16 @@ clearButton.addEventListener('click', () => {
 });
 
 retryCameraButton.addEventListener('click', () => {
+  initializeCamera(true);
+});
+
+cameraSelect.addEventListener('change', () => {
+  selectedCameraId = cameraSelect.value;
+  if (selectedCameraId) {
+    window.localStorage.setItem(cameraStorageKey, selectedCameraId);
+  } else {
+    window.localStorage.removeItem(cameraStorageKey);
+  }
   initializeCamera(true);
 });
 
@@ -507,29 +525,70 @@ function deleteSelectedRecording() {
   updateStatus(deleted ? `deleted ${deleted.label}` : 'saved motion deleted');
 }
 
-function initializeCamera(force = false) {
-  if (cameraStarting && !force) return;
-  cameraStarting = true;
+async function refreshCameraDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
 
-  if (force) {
-    cameraRetryCount = 0;
+  try {
+    const devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === 'videoinput');
+
+    cameraSelect!.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Default camera';
+    cameraSelect!.appendChild(defaultOption);
+
+    for (const [index, device] of devices.entries()) {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = device.label || `Camera ${index + 1}`;
+      cameraSelect!.appendChild(option);
+    }
+
+    if (selectedCameraId && !devices.some((device) => device.deviceId === selectedCameraId)) {
+      selectedCameraId = '';
+      window.localStorage.removeItem(cameraStorageKey);
+    }
+
+    cameraSelect!.value = selectedCameraId;
+    cameraSelect!.disabled = devices.length === 0;
+  } catch (error) {
+    console.warn('Could not enumerate cameras:', error);
   }
+}
 
+function stopCameraStream() {
+  cameraRunId += 1;
+  if (cameraFrameRequest) {
+    cancelAnimationFrame(cameraFrameRequest);
+    cameraFrameRequest = 0;
+  }
+  if (cameraStream) {
+    for (const track of cameraStream.getTracks()) track.stop();
+    cameraStream = null;
+  }
+  video.srcObject = null;
+  processingCameraFrame = false;
+}
+
+function createPoseSolution() {
   const pose = new Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`,
   });
-  const faceMesh = new FaceMesh({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
-  });
-
   pose.setOptions({
     modelComplexity: 1,
     smoothLandmarks: true,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5,
   });
-
   pose.onResults(handlePoseResults);
+  return pose;
+}
+
+function createFaceMeshSolution() {
+  const faceMesh = new FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
+  });
   faceMesh.setOptions({
     maxNumFaces: 1,
     refineLandmarks: true,
@@ -537,32 +596,75 @@ function initializeCamera(force = false) {
     minTrackingConfidence: 0.5,
   });
   faceMesh.onResults(handleFaceResults);
+  return faceMesh;
+}
 
-  camera = new Camera(video, {
-    onFrame: async () => {
+function startCameraFrameLoop(runId: number) {
+  const tick = async () => {
+    if (runId !== cameraRunId) return;
+
+    if (video.readyState >= 2 && poseSolution && faceMeshSolution && !processingCameraFrame) {
+      processingCameraFrame = true;
       try {
-        await pose.send({ image: video });
+        await poseSolution.send({ image: video });
       } catch (error) {
         currentLandmarks = null;
         console.warn('Pose frame failed:', error);
       }
 
       try {
-        await faceMesh.send({ image: video });
+        await faceMeshSolution.send({ image: video });
       } catch (error) {
         currentFaceLandmarks = [];
         console.warn('FaceMesh frame failed:', error);
+      } finally {
+        processingCameraFrame = false;
       }
-    },
-    width: 640,
-    height: 480,
-  });
+    }
 
-  camera.start().then(() => {
+    cameraFrameRequest = requestAnimationFrame(tick);
+  };
+
+  cameraFrameRequest = requestAnimationFrame(tick);
+}
+
+async function initializeCamera(force = false) {
+  if (cameraStarting && !force) return;
+  cameraStarting = true;
+
+  if (force) {
+    cameraRetryCount = 0;
+  }
+
+  stopCameraStream();
+  poseSolution = createPoseSolution();
+  faceMeshSolution = createFaceMeshSolution();
+
+  const videoConstraint: MediaTrackConstraints = {
+    width: { ideal: 640 },
+    height: { ideal: 480 },
+  };
+  if (selectedCameraId) videoConstraint.deviceId = { exact: selectedCameraId };
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: videoConstraint,
+      audio: false,
+    });
+    video.srcObject = cameraStream;
+    await video.play();
+
+    const activeTrack = cameraStream.getVideoTracks()[0];
+    const activeDeviceId = activeTrack?.getSettings().deviceId;
+    if (!selectedCameraId && activeDeviceId) selectedCameraId = activeDeviceId;
+    await refreshCameraDevices();
+
+    const runId = cameraRunId;
+    startCameraFrameLoop(runId);
     cameraStarting = false;
     cameraRetryCount = 0;
     updateStatus('camera ready, move into view');
-  }).catch((error) => {
+  } catch (error) {
     cameraStarting = false;
     cameraRetryCount += 1;
 
@@ -574,7 +676,7 @@ function initializeCamera(force = false) {
     }
 
     console.warn('Camera startup failed:', error);
-  });
+  }
 }
 
 function handleFaceResults(results: FaceResults) {
