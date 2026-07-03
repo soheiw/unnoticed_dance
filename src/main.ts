@@ -174,7 +174,7 @@ let playback = false;
 let playbackMode: PlaybackMode = 'dance';
 let playbackStart = 0;
 let playbackDuration = 0;
-type DancePanelColumn = 'overlap' | 'transformed' | 'explanation';
+type DancePanelColumn = 'original' | 'overlap' | 'transformed' | 'explanation';
 let focusedPanel: { row: number; column: DancePanelColumn } | null = null;
 let lastDancePanelRects: { row: number; column: DancePanelColumn; x: number; y: number; width: number; height: number }[] = [];
 let lastCaptureTime = 0;
@@ -242,6 +242,11 @@ canvas.addEventListener('dblclick', (event) => {
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && focusedPanel) focusedPanel = null;
+});
+
+originalPreviewCanvas.addEventListener('dblclick', () => {
+  if (!playback || playbackMode !== 'dance') return;
+  focusedPanel = focusedPanel?.column === 'original' ? null : { row: 0, column: 'original' };
 });
 
 recordButton.addEventListener('click', () => {
@@ -2212,12 +2217,23 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   ctx.restore();
 
   if (focusedPanel) {
-    const variation = variations[focusedPanel.row];
     const x = margin;
     const y = topInset;
     const width = canvas.width - margin * 2;
     const height = canvas.height - topInset - margin;
 
+    if (focusedPanel.column === 'original') {
+      drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, x, y, width, height, 0.95, 'rgba(255,255,255,0.95)');
+      drawFocusLabel('Original', x, y);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(92, 214, 255, 0.42)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 4, y + 4, width - 8, height - 8);
+      ctx.restore();
+      return;
+    }
+
+    const variation = variations[focusedPanel.row];
     if (focusedPanel.column === 'explanation') {
       drawExplanationPanel(x, y, width, height, variation);
     } else {
