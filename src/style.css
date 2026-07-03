@@ -173,82 +173,6 @@ input[type="number"] {
   opacity: 0.8;
 }
 
-.is-playing .overlay {
-  max-width: min(360px, calc(100vw - 40px));
-  font-size: 0.78rem;
-}
-
-.is-playing .overlay h1 {
-  font-size: 1.25rem;
-  margin-bottom: 4px;
-}
-
-.is-playing .overlay p {
-  display: none;
-}
-
-.is-playing .setup-only {
-  display: none;
-}
-
-.is-playing .controls {
-  gap: 6px;
-  margin: 8px 0 6px;
-}
-
-.is-playing button,
-.is-playing select {
-  padding: 6px 10px;
-  font-size: 0.74rem;
-}
-
-.is-playing select {
-  min-width: 140px;
-  max-width: 230px;
-}
-
-.is-playing input[type="number"] {
-  width: 52px;
-  padding: 6px 8px;
-  font-size: 0.74rem;
-}
-
-.is-playing .recording-library,
-.is-playing .rule-controls {
-  gap: 5px 7px;
-  margin-bottom: 6px;
-}
-
-.is-playing .recording-option {
-  gap: 5px;
-  margin-bottom: 6px;
-  font-size: 0.66rem;
-}
-
-.is-playing .recording-option input {
-  width: 12px;
-  height: 12px;
-}
-
-.is-playing .rule-controls {
-  max-width: min(360px, calc(100vw - 40px));
-}
-
-.is-playing .panel-rule-grid {
-  grid-template-columns: auto minmax(112px, 1fr);
-  gap: 4px 7px;
-}
-
-.is-playing .recording-library label,
-.is-playing .rule-controls > label,
-.is-playing .panel-rule-grid label {
-  font-size: 0.66rem;
-}
-
-.is-playing .status {
-  font-size: 0.74rem;
-}
-
 .camera-preview {
   position: absolute;
   left: 24px;
@@ -261,10 +185,4 @@ input[type="number"] {
   object-fit: cover;
   transform-origin: center;
   opacity: 0.96;
-}
-
-.is-playing .camera-preview {
-  width: min(160px, calc(100vw - 48px));
-  max-height: min(120px, calc(100vh - 48px));
-  opacity: 0.68;
 }
