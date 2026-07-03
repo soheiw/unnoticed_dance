@@ -24,6 +24,9 @@ declare global {
 }
 
 const root = document.getElementById('app');
+const stage = document.getElementById('stage');
+const cameraPreviewBox = document.getElementById('cameraPreviewBox');
+const originalPreviewCanvas = document.getElementById('originalPreviewCanvas') as HTMLCanvasElement | null;
 const recordButton = document.getElementById('recordButton') as HTMLButtonElement | null;
 const playOriginalButton = document.getElementById('playOriginalButton') as HTMLButtonElement | null;
 const playButton = document.getElementById('playButton') as HTMLButtonElement | null;
@@ -90,7 +93,10 @@ if (
   !bpmSlider ||
   !bpmInput ||
   panelRuleSelects.some((select) => !select) ||
-  !statusElement
+  !statusElement ||
+  !stage ||
+  !cameraPreviewBox ||
+  !originalPreviewCanvas
 ) {
   throw new Error('Required UI elements not found');
 }
@@ -100,13 +106,17 @@ video.className = 'camera-preview';
 video.autoplay = true;
 video.muted = true;
 video.playsInline = true;
-root.appendChild(video);
+cameraPreviewBox.appendChild(video);
 
 const canvas = document.createElement('canvas');
 canvas.className = 'dance-canvas';
-root.appendChild(canvas);
+stage.appendChild(canvas);
 
-const ctx = canvas.getContext('2d')!;
+// Mutable so drawOriginalPreview() can temporarily redirect every drawing
+// helper (fillTorso/drawFaceGlyph/drawHandGlyph/drawSkeletonInPanel) at the
+// small sidebar canvas instead of duplicating all of that rendering code.
+let ctx = canvas.getContext('2d')!;
+const originalCtx = originalPreviewCanvas.getContext('2d')!;
 
 type VariationKind = 'wave' | 'upperPull' | 'centerRipple' | 'floatDrift' | 'gestureAccent' | 'rhythmLock';
 
@@ -164,7 +174,7 @@ let playback = false;
 let playbackMode: PlaybackMode = 'dance';
 let playbackStart = 0;
 let playbackDuration = 0;
-type DancePanelColumn = 'original' | 'overlap' | 'transformed' | 'explanation';
+type DancePanelColumn = 'overlap' | 'transformed' | 'explanation';
 let focusedPanel: { row: number; column: DancePanelColumn } | null = null;
 let lastDancePanelRects: { row: number; column: DancePanelColumn; x: number; y: number; width: number; height: number }[] = [];
 let lastCaptureTime = 0;
@@ -201,9 +211,14 @@ class CameraRequestTimeout extends Error {
   }
 }
 
+// Sizes the canvas to exactly fill the stage box (no scroll). The dance grid
+// grows the canvas taller than this when it needs more room than the stage
+// currently shows — see drawDanceOverlay.
 function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = stage!.clientWidth;
+  canvas.height = stage!.clientHeight;
+  if (originalPreviewCanvas!.clientWidth > 0) originalPreviewCanvas!.width = originalPreviewCanvas!.clientWidth;
+  if (originalPreviewCanvas!.clientHeight > 0) originalPreviewCanvas!.height = originalPreviewCanvas!.clientHeight;
 }
 
 window.addEventListener('resize', resizeCanvas);
@@ -1936,25 +1951,34 @@ function drawSkeletonInPanel(
   ctx.restore();
 }
 
+// Renders into the small "Original" preview canvas in the sidebar, showing
+// whatever the current base pose is: live camera pose when idle, or the
+// currently-playing frame's pose during Original/Dance playback.
+function drawOriginalPreview(landmarks: PoseLandmark[] | null, faceLandmarks: PoseLandmark[], handLandmarks?: HandLandmarks) {
+  const width = originalPreviewCanvas!.width;
+  const height = originalPreviewCanvas!.height;
+  originalCtx.clearRect(0, 0, width, height);
+  if (!landmarks) return;
+
+  const previousCtx = ctx;
+  ctx = originalCtx;
+  try {
+    drawSkeletonInPanel(landmarks, faceLandmarks, handLandmarks, 0, 0, width, height, 0.95, 'rgba(255,255,255,0.95)');
+  } finally {
+    ctx = previousCtx;
+  }
+}
+
 function drawLivePose() {
   if (!currentLandmarks) return;
   drawSkeleton(currentLandmarks, 0.88, 'rgba(255,255,255,0.96)');
 }
 
-// Only called during playback, when the compact .is-playing overlay (BPM +
-// panel selects + status) is already minimized — a small fixed margin lets
-// panels use nearly the full canvas instead of reserving space based on the
-// overlay's height, which wasted a lot of space in columns the overlay
-// doesn't even reach.
+// The sidebar and stage are separate flex columns (see #app in style.css),
+// so the canvas never has to share space with the controls — a small fixed
+// margin is all that's needed here.
 function canvasTopInset() {
-  const overlay = document.querySelector('.overlay') as HTMLElement | null;
-  if (!overlay) return 20;
-  const rect = overlay.getBoundingClientRect();
-  // .overlay has its own CSS max-height (with internal scroll), so
-  // rect.bottom is already bounded — no need to clamp it below the
-  // overlay's real position (that mismatch is what caused panels to render
-  // underneath the still-visible controls).
-  return clamp(rect.bottom + 14, 20, canvas.height - 40);
+  return 20;
 }
 
 function drawOriginalPlayback(elapsedMilliseconds: number) {
@@ -1981,6 +2005,7 @@ function drawOriginalPlayback(elapsedMilliseconds: number) {
   ctx.restore();
 
   drawSkeletonInPanel(frame.landmarks, frame.faceLandmarks, frame.handLandmarks, margin, topInset, panelWidth, panelHeight, 0.96, 'rgba(255,255,255,0.96)');
+  drawOriginalPreview(frame.landmarks, frame.faceLandmarks, frame.handLandmarks);
 }
 
 function drawDanceOverlay(elapsedMilliseconds: number) {
@@ -2029,18 +2054,31 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   const gap = 16;
   const rowGap = 12;
   const rowCount = variations.length;
-  const panelHeight = (canvas.height - topInset - margin - rowGap * (rowCount - 1)) / rowCount;
-  const totalWidth = canvas.width - margin * 2 - gap * 3;
-  // Always use the full available width per column. Capping width relative
-  // to height (tried earlier) backfires when panelHeight is small — labels
-  // and content overflow into neighboring columns instead.
-  const originalPanelWidth = totalWidth * 0.18;
-  const explanationPanelWidth = totalWidth * 0.18;
-  const motionPanelWidth = (totalWidth - originalPanelWidth - explanationPanelWidth) / 2;
-  const leftPanelX = margin;
-  const centerPanelX = leftPanelX + originalPanelWidth + gap;
-  const rightPanelX = centerPanelX + motionPanelWidth + gap;
-  const explanationPanelX = rightPanelX + motionPanelWidth + gap;
+  // Fixed row height (not derived from available space) — the stage scrolls
+  // when 5 rows don't fit rather than squeezing panels until labels overlap.
+  const panelHeight = 260;
+
+  if (canvas.width !== stage!.clientWidth) canvas.width = stage!.clientWidth;
+  if (focusedPanel) {
+    // A single focused panel never needs to scroll — shrink back to fit.
+    if (canvas.height !== stage!.clientHeight) canvas.height = stage!.clientHeight;
+  } else {
+    const contentHeight = topInset + rowCount * panelHeight + (rowCount - 1) * rowGap + margin;
+    if (canvas.height < Math.max(stage!.clientHeight, contentHeight)) {
+      canvas.height = Math.max(stage!.clientHeight, contentHeight);
+    }
+  }
+
+  // "Original" now lives in the sidebar, so this grid only needs to fit
+  // Overlap / Transformed / Explanation, arranged the same way (three equal
+  // columns) per row.
+  const totalWidth = canvas.width - margin * 2 - gap * 2;
+  const columnWidth = totalWidth / 3;
+  const centerPanelX = margin;
+  const rightPanelX = centerPanelX + columnWidth + gap;
+  const explanationPanelX = rightPanelX + columnWidth + gap;
+  const motionPanelWidth = columnWidth;
+  const explanationPanelWidth = columnWidth;
 
   const drawPanel = (landmarks: PoseLandmark[], faceLandmarks: PoseLandmark[], handLandmarks: HandLandmarks | undefined, x: number, y: number, width: number, height: number, alpha: number, stroke: string) => {
     drawSkeletonInPanel(landmarks, faceLandmarks, handLandmarks, x, y, width, height, alpha, stroke);
@@ -2180,10 +2218,7 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     const width = canvas.width - margin * 2;
     const height = canvas.height - topInset - margin;
 
-    if (focusedPanel.column === 'original') {
-      drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, x, y, width, height, 0.95, 'rgba(255,255,255,0.95)');
-      drawFocusLabel('Original', x, y);
-    } else if (focusedPanel.column === 'explanation') {
+    if (focusedPanel.column === 'explanation') {
       drawExplanationPanel(x, y, width, height, variation);
     } else {
       const result = computeTransformedFrame(focusedPanel.row, variation);
@@ -2207,6 +2242,8 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     return;
   }
 
+  drawOriginalPreview(baseLandmarks, baseFaceLandmarks, baseHandLandmarks);
+
   lastDancePanelRects = [];
 
   for (const [index, variation] of variations.entries()) {
@@ -2219,23 +2256,15 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     drawPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, rightPanelX, panelY, motionPanelWidth, panelHeight, 0.96, 'rgba(92, 214, 255, 0.96)');
     drawExplanationPanel(explanationPanelX, panelY, explanationPanelWidth, panelHeight, variation);
 
-    if (index === 0) {
-      drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, leftPanelX, panelY, originalPanelWidth, panelHeight, 0.95, 'rgba(255,255,255,0.95)');
-    }
-
     lastDancePanelRects.push(
       { row: index, column: 'overlap', x: centerPanelX, y: panelY, width: motionPanelWidth, height: panelHeight },
       { row: index, column: 'transformed', x: rightPanelX, y: panelY, width: motionPanelWidth, height: panelHeight },
       { row: index, column: 'explanation', x: explanationPanelX, y: panelY, width: explanationPanelWidth, height: panelHeight },
     );
-    if (index === 0) {
-      lastDancePanelRects.push({ row: 0, column: 'original', x: leftPanelX, y: panelY, width: originalPanelWidth, height: panelHeight });
-    }
 
     ctx.save();
     ctx.fillStyle = 'rgba(255,255,255,0.86)';
     ctx.font = '13px sans-serif';
-    if (index === 0) ctx.fillText('Original', leftPanelX + 10, panelY + 20);
     ctx.fillText(`${variation.name} overlap`, centerPanelX + 10, panelY + 20);
     ctx.fillText(`${variation.name} transformed`, rightPanelX + 10, panelY + 20);
     ctx.restore();
@@ -2243,7 +2272,6 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     ctx.save();
     ctx.strokeStyle = 'rgba(92, 214, 255, 0.42)';
     ctx.lineWidth = 1;
-    if (index === 0) ctx.strokeRect(leftPanelX + 4, panelY + 4, originalPanelWidth - 8, panelHeight - 8);
     ctx.strokeRect(centerPanelX + 4, panelY + 4, motionPanelWidth - 8, panelHeight - 8);
     ctx.strokeRect(rightPanelX + 4, panelY + 4, motionPanelWidth - 8, panelHeight - 8);
     ctx.restore();
@@ -2253,12 +2281,10 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   ctx.strokeStyle = 'rgba(255,255,255,0.28)';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(centerPanelX - gap / 2, topInset);
-  ctx.lineTo(centerPanelX - gap / 2, canvas.height - margin);
   ctx.moveTo(rightPanelX - gap / 2, topInset);
-  ctx.lineTo(rightPanelX - gap / 2, canvas.height - margin);
+  ctx.lineTo(rightPanelX - gap / 2, topInset + rowCount * panelHeight + (rowCount - 1) * rowGap);
   ctx.moveTo(explanationPanelX - gap / 2, topInset);
-  ctx.lineTo(explanationPanelX - gap / 2, canvas.height - margin);
+  ctx.lineTo(explanationPanelX - gap / 2, topInset + rowCount * panelHeight + (rowCount - 1) * rowGap);
   ctx.stroke();
   ctx.restore();
 }
@@ -2274,6 +2300,14 @@ function drawCameraBackground() {
 
 function drawFrame() {
   root?.classList.toggle('is-playing', playback);
+
+  const wantsTallCanvas = playback && playbackMode === 'dance';
+  if (!wantsTallCanvas && (canvas.width !== stage!.clientWidth || canvas.height !== stage!.clientHeight)) {
+    resizeCanvas();
+  } else if (canvas.width !== stage!.clientWidth) {
+    canvas.width = stage!.clientWidth;
+  }
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = 'rgba(8, 8, 16, 0.24)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -2290,6 +2324,7 @@ function drawFrame() {
     frameCounterElement!.textContent = 'Frame: -';
     drawCameraBackground();
     drawLivePose();
+    drawOriginalPreview(currentLandmarks, currentFaceLandmarks, currentHandLandmarks);
 
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);

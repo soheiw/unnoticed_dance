@@ -11,7 +11,7 @@
   </head>
   <body>
     <div id="app">
-      <div class="overlay">
+      <div class="sidebar" id="sidebar">
         <h1>Unnoticed Dance</h1>
         <p>Use your webcam to record body motion, then replay it slightly shifted as a dance.</p>
         <div class="controls">
@@ -91,7 +91,15 @@
         </div>
         <div class="status">Status: click Enable Camera</div>
         <div class="status" id="frameCounter">Frame: -</div>
+        <div class="sidebar-panel">
+          <div class="sidebar-panel-label">Original</div>
+          <canvas id="originalPreviewCanvas" width="300" height="180"></canvas>
+        </div>
+        <div class="sidebar-panel" id="cameraPreviewBox">
+          <div class="sidebar-panel-label">Camera</div>
+        </div>
       </div>
+      <div class="stage" id="stage"></div>
     </div>
     <script type="module" src="src/main.ts"></script>
   </body>

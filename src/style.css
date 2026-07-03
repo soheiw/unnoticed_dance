@@ -16,44 +16,67 @@ body, html {
   overflow: hidden;
 }
 
+/* Two-column layout: a fixed-width, independently-scrolling sidebar for all
+   controls, and a stage area (also independently scrolling) that only ever
+   has to size itself relative to its own box — never the sidebar's content
+   length. The two can never overlap each other by construction, which is
+   the property every previous single-canvas/overlay layout kept losing. */
 #app {
-  position: relative;
+  display: flex;
   width: 100%;
   height: 100vh;
 }
 
-.dance-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
+.sidebar {
+  flex: 0 0 340px;
+  width: 340px;
+  max-width: 100vw;
   height: 100%;
-}
-
-.overlay {
-  position: absolute;
-  left: 20px;
-  top: 20px;
-  z-index: 10;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 20px;
   color: #f3f3ff;
   text-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
-  max-width: min(390px, calc(100vw - 40px));
-  /* Bound the overlay's own height (with internal scroll) instead of letting
-     it grow indefinitely as more controls are added — this guarantees the
-     canvas panel grid always has real, predictable space below it, rather
-     than relying on a topInset clamp that could disagree with where the
-     overlay actually ends. */
-  max-height: min(420px, 50vh);
-  overflow-y: auto;
-  padding-right: 6px;
 }
 
-.overlay::-webkit-scrollbar {
+.sidebar::-webkit-scrollbar {
   width: 6px;
 }
 
-.overlay::-webkit-scrollbar-thumb {
+.sidebar::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.25);
   border-radius: 999px;
+}
+
+.stage {
+  flex: 1 1 auto;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.dance-canvas {
+  display: block;
+}
+
+.sidebar-panel {
+  margin: 0 0 12px;
+}
+
+.sidebar-panel-label {
+  font-size: 0.74rem;
+  opacity: 0.75;
+  margin-bottom: 4px;
+}
+
+#originalPreviewCanvas {
+  display: block;
+  width: 100%;
+  height: 180px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .controls {
@@ -177,13 +200,13 @@ input[type="number"] {
   opacity: 0.88;
 }
 
-.overlay h1 {
+.sidebar h1 {
   margin: 0 0 6px;
   font-size: clamp(1.45rem, 2.1vw, 2.5rem);
   line-height: 1.05;
 }
 
-.overlay p {
+.sidebar p {
   margin: 0;
   font-size: 0.82rem;
   line-height: 1.25;
@@ -191,15 +214,11 @@ input[type="number"] {
 }
 
 .camera-preview {
-  position: absolute;
-  left: 24px;
-  bottom: 24px;
-  width: min(220px, calc(100vw - 48px));
-  max-height: min(165px, calc(100vh - 48px));
+  display: block;
+  width: 100%;
+  height: 180px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
   object-fit: cover;
-  transform-origin: center;
   opacity: 0.96;
 }
