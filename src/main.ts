@@ -1950,7 +1950,11 @@ function canvasTopInset() {
   const overlay = document.querySelector('.overlay') as HTMLElement | null;
   if (!overlay) return 20;
   const rect = overlay.getBoundingClientRect();
-  return clamp(rect.bottom + 14, 20, Math.max(20, canvas.height - 260));
+  // .overlay has its own CSS max-height (with internal scroll), so
+  // rect.bottom is already bounded — no need to clamp it below the
+  // overlay's real position (that mismatch is what caused panels to render
+  // underneath the still-visible controls).
+  return clamp(rect.bottom + 14, 20, canvas.height - 40);
 }
 
 function drawOriginalPlayback(elapsedMilliseconds: number) {

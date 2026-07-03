@@ -37,6 +37,23 @@ body, html {
   color: #f3f3ff;
   text-shadow: 0 0 20px rgba(0, 0, 0, 0.55);
   max-width: min(390px, calc(100vw - 40px));
+  /* Bound the overlay's own height (with internal scroll) instead of letting
+     it grow indefinitely as more controls are added — this guarantees the
+     canvas panel grid always has real, predictable space below it, rather
+     than relying on a topInset clamp that could disagree with where the
+     overlay actually ends. */
+  max-height: min(600px, calc(100vh - 260px));
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.overlay::-webkit-scrollbar {
+  width: 6px;
+}
+
+.overlay::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
 }
 
 .controls {
