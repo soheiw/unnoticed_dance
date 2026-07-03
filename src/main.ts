@@ -1788,6 +1788,7 @@ function drawHandGlyph(
   alpha: number,
   stroke: string,
   lineWidth: number,
+  dotRadius: number = lineWidth,
 ) {
   if (!hand || hand.length === 0 || !window.HAND_CONNECTIONS) return;
 
@@ -1810,7 +1811,7 @@ function drawHandGlyph(
   for (const landmark of hand) {
     const point = toPoint(landmark);
     ctx.beginPath();
-    ctx.arc(point.x, point.y, lineWidth * 1.4, 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, dotRadius, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -1857,8 +1858,8 @@ function drawSkeleton(landmarks: PoseLandmark[], alpha: number, stroke: string) 
   }
   ctx.restore();
   drawFaceGlyph(landmarks, currentFaceLandmarks, toCanvas, alpha, stroke, Math.min(canvas.width, canvas.height));
-  drawHandGlyph(currentHandLandmarks.left, toCanvas, alpha, stroke, 2.4);
-  drawHandGlyph(currentHandLandmarks.right, toCanvas, alpha, stroke, 2.4);
+  drawHandGlyph(currentHandLandmarks.left, toCanvas, alpha, stroke, 1.6, 1.8);
+  drawHandGlyph(currentHandLandmarks.right, toCanvas, alpha, stroke, 1.6, 1.8);
 }
 
 function drawSkeletonInPanel(
@@ -1927,8 +1928,10 @@ function drawSkeletonInPanel(
     ctx.fill();
   }
   drawFaceGlyph(landmarks, faceLandmarks, toPanel, alpha, stroke, baseSize);
-  drawHandGlyph(handLandmarks?.left, toPanel, alpha, stroke, Math.max(1.2, baseSize * 0.012));
-  drawHandGlyph(handLandmarks?.right, toPanel, alpha, stroke, Math.max(1.2, baseSize * 0.012));
+  const handLineWidth = Math.max(0.7, baseSize * 0.0025);
+  const handDotRadius = Math.max(0.9, baseSize * 0.003);
+  drawHandGlyph(handLandmarks?.left, toPanel, alpha, stroke, handLineWidth, handDotRadius);
+  drawHandGlyph(handLandmarks?.right, toPanel, alpha, stroke, handLineWidth, handDotRadius);
 
   ctx.restore();
 }
@@ -2020,14 +2023,21 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   const rowGap = 12;
   const rowCount = variations.length;
   const panelHeight = (canvas.height - topInset - margin - rowGap * (rowCount - 1)) / rowCount;
-  const totalWidth = canvas.width - margin * 2 - gap * 3;
-  const originalPanelWidth = totalWidth * 0.18;
-  const explanationPanelWidth = totalWidth * 0.18;
-  const motionPanelWidth = (totalWidth - originalPanelWidth - explanationPanelWidth) / 2;
-  const leftPanelX = margin;
-  const centerPanelX = leftPanelX + originalPanelWidth + gap;
+  // "Original" is no longer part of the row grid — it's drawn once, directly
+  // above the camera-preview thumbnail, so the grid only needs to fit the
+  // overlap/transformed/explanation columns.
+  const totalWidth = canvas.width - margin * 2 - gap * 2;
+  const explanationPanelWidth = totalWidth * 0.22;
+  const motionPanelWidth = (totalWidth - explanationPanelWidth) / 2;
+  const centerPanelX = margin;
   const rightPanelX = centerPanelX + motionPanelWidth + gap;
   const explanationPanelX = rightPanelX + motionPanelWidth + gap;
+
+  const cameraRect = video.getBoundingClientRect();
+  const originalPanelWidth = cameraRect.width > 0 ? cameraRect.width : 200;
+  const originalPanelHeight = 130;
+  const originalPanelX = cameraRect.width > 0 ? cameraRect.left : margin;
+  const originalPanelY = (cameraRect.height > 0 ? cameraRect.top : canvas.height - 24) - originalPanelHeight - 10;
 
   const drawPanel = (landmarks: PoseLandmark[], faceLandmarks: PoseLandmark[], handLandmarks: HandLandmarks | undefined, x: number, y: number, width: number, height: number, alpha: number, stroke: string) => {
     drawSkeletonInPanel(landmarks, faceLandmarks, handLandmarks, x, y, width, height, alpha, stroke);
@@ -2206,23 +2216,15 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     drawPanel(transformedLandmarks, transformedFaceLandmarks, transformedHandLandmarks, rightPanelX, panelY, motionPanelWidth, panelHeight, 0.96, 'rgba(92, 214, 255, 0.96)');
     drawExplanationPanel(explanationPanelX, panelY, explanationPanelWidth, panelHeight, variation);
 
-    if (index === 0) {
-      drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, leftPanelX, panelY, originalPanelWidth, panelHeight, 0.95, 'rgba(255,255,255,0.95)');
-    }
-
     lastDancePanelRects.push(
       { row: index, column: 'overlap', x: centerPanelX, y: panelY, width: motionPanelWidth, height: panelHeight },
       { row: index, column: 'transformed', x: rightPanelX, y: panelY, width: motionPanelWidth, height: panelHeight },
       { row: index, column: 'explanation', x: explanationPanelX, y: panelY, width: explanationPanelWidth, height: panelHeight },
     );
-    if (index === 0) {
-      lastDancePanelRects.push({ row: 0, column: 'original', x: leftPanelX, y: panelY, width: originalPanelWidth, height: panelHeight });
-    }
 
     ctx.save();
     ctx.fillStyle = 'rgba(255,255,255,0.86)';
     ctx.font = '13px sans-serif';
-    if (index === 0) ctx.fillText('Original', leftPanelX + 10, panelY + 20);
     ctx.fillText(`${variation.name} overlap`, centerPanelX + 10, panelY + 20);
     ctx.fillText(`${variation.name} transformed`, rightPanelX + 10, panelY + 20);
     ctx.restore();
@@ -2230,7 +2232,6 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
     ctx.save();
     ctx.strokeStyle = 'rgba(92, 214, 255, 0.42)';
     ctx.lineWidth = 1;
-    if (index === 0) ctx.strokeRect(leftPanelX + 4, panelY + 4, originalPanelWidth - 8, panelHeight - 8);
     ctx.strokeRect(centerPanelX + 4, panelY + 4, motionPanelWidth - 8, panelHeight - 8);
     ctx.strokeRect(rightPanelX + 4, panelY + 4, motionPanelWidth - 8, panelHeight - 8);
     ctx.restore();
@@ -2240,13 +2241,28 @@ function drawDanceOverlay(elapsedMilliseconds: number) {
   ctx.strokeStyle = 'rgba(255,255,255,0.28)';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(centerPanelX - gap / 2, topInset);
-  ctx.lineTo(centerPanelX - gap / 2, canvas.height - margin);
   ctx.moveTo(rightPanelX - gap / 2, topInset);
   ctx.lineTo(rightPanelX - gap / 2, canvas.height - margin);
   ctx.moveTo(explanationPanelX - gap / 2, topInset);
   ctx.lineTo(explanationPanelX - gap / 2, canvas.height - margin);
   ctx.stroke();
+  ctx.restore();
+
+  // "Original" sits above the camera-preview thumbnail instead of in the
+  // row grid, so it stays put regardless of how many panel rows are active.
+  drawPanel(baseLandmarks, baseFaceLandmarks, baseHandLandmarks, originalPanelX, originalPanelY, originalPanelWidth, originalPanelHeight, 0.95, 'rgba(255,255,255,0.95)');
+  lastDancePanelRects.push({ row: 0, column: 'original', x: originalPanelX, y: originalPanelY, width: originalPanelWidth, height: originalPanelHeight });
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.86)';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('Original', originalPanelX + 10, originalPanelY + 20);
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(92, 214, 255, 0.42)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(originalPanelX + 4, originalPanelY + 4, originalPanelWidth - 8, originalPanelHeight - 8);
   ctx.restore();
 }
 

@@ -84,6 +84,11 @@ input[type="checkbox"] {
   accent-color: #5cd6ff;
 }
 
+input[type="range"] {
+  min-width: 0;
+  width: 100%;
+}
+
 input[type="number"] {
   width: 62px;
   border: none;
