@@ -42,7 +42,7 @@ body, html {
      canvas panel grid always has real, predictable space below it, rather
      than relying on a topInset clamp that could disagree with where the
      overlay actually ends. */
-  max-height: min(600px, calc(100vh - 260px));
+  max-height: min(420px, 50vh);
   overflow-y: auto;
   padding-right: 6px;
 }
